@@ -55,3 +55,11 @@ def test_db_schedule_with_override():
     assert db.used_sources() == {"chernihiv"}
     db.delete(1)
     assert db.get(1) is None
+
+
+def test_db_sched_day_all_queues():
+    db = DB(":memory:")
+    db.sched_put("kyiv", "1.1", "2026-11-20", [["06:00", "09:00"]])
+    db.sched_put("kyiv", "2.1", "2026-11-20", [])
+    db.sched_put("kyiv", "1.1", "2026-11-21", [["10:00", "12:00"]])
+    assert db.sched_day("kyiv", "2026-11-20") == {"1.1": [["06:00", "09:00"]], "2.1": []}

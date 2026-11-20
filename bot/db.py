@@ -93,6 +93,11 @@ class DB:
         return {d: json.loads(iv) for d, iv in self.c.execute(
             "SELECT day,intervals FROM sched WHERE power=? AND queue=?", (power, queue))}
 
+    def sched_day(self, power: str, day: str) -> dict[str, list]:
+        """Все очереди источника на день: {queue: intervals}."""
+        return {q: json.loads(iv) for q, iv in self.c.execute(
+            "SELECT queue,intervals FROM sched WHERE power=? AND day=?", (power, day))}
+
     def sched_has(self, power: str) -> bool:
         return self.c.execute("SELECT 1 FROM sched WHERE power=? LIMIT 1", (power,)).fetchone() is not None
 
