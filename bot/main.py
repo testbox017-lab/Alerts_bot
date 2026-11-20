@@ -118,9 +118,19 @@ def power_kb(oblast: str | None, show_all: bool = False) -> InlineKeyboardMarkup
     return kb(rows)
 
 
-def queue_kb(queues: list[str]) -> InlineKeyboardMarkup:
+MAX_QUEUES = 5
+
+
+def queue_kb(queues: list[str], selected: list[str]) -> InlineKeyboardMarkup:
     per_row = 6 if len(queues) > 20 else 4
-    return kb(chunk([(q, f"q:{q}") for q in queues], per_row))
+    rows = chunk([(("✅ " if q in selected else "") + q, f"q:{q}") for q in queues], per_row)
+    rows.append([("Готово ✔️", "qd")])
+    return kb(rows)
+
+
+def queue_label(sub: Sub) -> str:
+    qs = sub.queues
+    return ("черга " if len(qs) == 1 else "черги ") + (", ".join(qs) or "—")
 
 
 def describe(sub: Sub) -> str:
@@ -128,7 +138,7 @@ def describe(sub: Sub) -> str:
     if sub.raion:
         lines.append(f"🔎 Фільтр районів: {sub.raion}")
     if sub.power:
-        lines.append(f"💡 Світло: {POWER_SOURCES[sub.power][0]}, черга {sub.queue or '—'}")
+        lines.append(f"💡 Світло: {POWER_SOURCES[sub.power][0]}, {queue_label(sub)}")
     else:
         lines.append("💡 Графік світла: вимкнено")
     lines.append(f"⏰ Нагадування за {sub.remind} хв" if sub.remind else "⏰ Нагадування вимкнено")
@@ -148,18 +158,25 @@ def all_queues_text(sub: Sub, offset: int) -> str:
     lines = []
     for q in sorted(data, key=power.queue_sort_key):
         body = ", ".join(f"{a}–{b}" for a, b in data[q]) or "без відключень"
-        mark = "👉 " if q == sub.queue else ""
+        mark = "👉 " if q in sub.queues else ""
         lines.append(f"{mark}{q}: {body}")
     return title + f"({power.fmt_day(day, [])[:5]})\n" + "\n".join(lines)
 
 
 def schedule_text(sub: Sub) -> str:
-    data = db.schedule_for(sub, today())
-    if not data:
+    per_queue = db.schedules_for(sub, today())
+    if not any(per_queue.values()):
         return "Графік на сьогодні/завтра ще невідомий."
     manual = db.overrides(sub.chat_id)
-    lines = [power.fmt_day(d, iv) + (" ✍️" if d in manual else "") for d, iv in data.items()]
-    return "💡 Відключення:\n" + "\n".join(lines)
+
+    def lines(data: dict) -> list[str]:
+        return [power.fmt_day(d, iv) + (" ✍️" if d in manual else "") for d, iv in data.items()]
+
+    if len(per_queue) == 1:
+        return "💡 Відключення:\n" + "\n".join(lines(next(iter(per_queue.values()))))
+    parts = [f"Черга {q}:\n" + ("\n".join(lines(data)) or "графіка ще немає")
+             for q, data in per_queue.items()]
+    return "💡 Відключення\n\n" + "\n\n".join(parts)
 
 
 # ---------- источники графиков ----------
@@ -194,15 +211,17 @@ async def power_loop():
                 continue
             upd = source_cache[src][1]
             for sub in db.all():
-                if sub.power != src or sub.queue not in changed:
+                mine = [q for q in sub.queues if q in changed] if sub.power == src else []
+                if not mine:
                     continue
-                sched = db.sched_get(src, sub.queue)
                 manual = db.overrides(sub.chat_id)
-                lines = [power.fmt_day(d, sched[d]) for d in sorted(changed[sub.queue])]
-                note = "\n(є ручна правка /svet — вона діє, поки не очистиш)" if \
-                    any(d in manual for d in changed[sub.queue]) else ""
-                await send(sub.chat_id, f"📋 Графік черги {sub.queue} оновлено ({upd}):\n"
-                           + "\n".join(lines) + note)
+                for q in mine:
+                    sched = db.sched_get(src, q)
+                    lines = [power.fmt_day(d, sched[d]) for d in sorted(changed[q])]
+                    note = "\n(є ручна правка /svet — вона діє, поки не очистиш)" if \
+                        any(d in manual for d in changed[q]) else ""
+                    await send(sub.chat_id, f"📋 Графік черги {q} оновлено ({upd}):\n"
+                               + "\n".join(lines) + note)
         await asyncio.sleep(config.POWER_POLL_SECONDS)
 
 
@@ -213,16 +232,20 @@ async def reminder_loop():
         for sub in db.all():
             if not sub.remind:
                 continue
-            by_day = db.schedule_for(sub, since)
-            for key, kind, t in power.due_reminders(by_day, now, sub.remind):
-                if db.was_sent(sub.chat_id, key):
-                    continue
-                left = max(0, round((t - now).total_seconds() / 60))
-                hhmm = f"{t:%H:%M}"
-                text = (f"🔌 Через {left} хв ({hhmm}) вимкнуть світло. Заряди павербанк!"
-                        if kind == "off" else f"💡 Через {left} хв ({hhmm}) мають дати світло")
-                db.mark_sent(sub.chat_id, key, t.date().isoformat())
-                await send(sub.chat_id, text)
+            per_queue = db.schedules_for(sub, since)
+            many = len(per_queue) > 1
+            for q, by_day in per_queue.items():
+                for key, kind, t in power.due_reminders(by_day, now, sub.remind):
+                    key = f"{q}|{key}" if many else key
+                    if db.was_sent(sub.chat_id, key):
+                        continue
+                    left = max(0, round((t - now).total_seconds() / 60))
+                    hhmm = f"{t:%H:%M}"
+                    tag = f" (черга {q})" if many else ""
+                    text = (f"🔌 Через {left} хв ({hhmm}) вимкнуть світло{tag}. Заряди павербанк!"
+                            if kind == "off" else f"💡 Через {left} хв ({hhmm}) мають дати світло{tag}")
+                    db.mark_sent(sub.chat_id, key, t.date().isoformat())
+                    await send(sub.chat_id, text)
         await asyncio.sleep(30)
 
 
@@ -475,9 +498,11 @@ async def cb_power(c: CallbackQuery):
     queues = sorted(source_cache.get(key, ({}, ""))[0], key=power.queue_sort_key)
     if not queues:
         return await c.message.edit_text("Не вдалося завантажити графік, спробуй пізніше: /settings")
-    db.update(chat_id, power=key, queue=None)
-    await c.message.edit_text(f"{POWER_SOURCES[key][0]}\nОбери свою чергу (підчергу):",
-                              reply_markup=queue_kb(queues))
+    keep = [q for q in sub.queues if q in queues] if sub.power == key else []
+    db.update(chat_id, power=key, queue=",".join(keep) or None)
+    await c.message.edit_text(
+        f"{POWER_SOURCES[key][0]}\nПозначь свою чергу (можна до {MAX_QUEUES}, напр. дім і дача) "
+        "і натисни «Готово»:", reply_markup=queue_kb(queues, keep))
 
 
 @dp.callback_query(F.data.startswith("q:"))
@@ -485,9 +510,38 @@ async def cb_queue(c: CallbackQuery):
     if not await cb_guard(c):
         return
     chat_id = c.message.chat.id
-    db.update(chat_id, queue=c.data[2:])
     sub = db.get(chat_id)
-    await c.message.edit_text("Готово!\n\n" + describe(sub) + "\n\n" + schedule_text(sub))
+    if not sub or not sub.power:
+        return await c.answer("Спочатку обери постачальника", show_alert=True)
+    q = c.data[2:]
+    sel = sub.queues
+    if q in sel:
+        sel.remove(q)
+    elif len(sel) >= MAX_QUEUES:
+        return await c.answer(f"Не більше {MAX_QUEUES} черг", show_alert=True)
+    else:
+        sel.append(q)
+    sel.sort(key=power.queue_sort_key)
+    db.update(chat_id, queue=",".join(sel) or None)
+    if sub.power not in source_cache:
+        try:
+            await refresh_source(sub.power)
+        except Exception as e:  # noqa: BLE001
+            log.warning("source %s: %s", sub.power, e)
+    queues = sorted(source_cache.get(sub.power, ({}, ""))[0], key=power.queue_sort_key) or sel
+    await c.message.edit_reply_markup(reply_markup=queue_kb(queues, sel))
+    await c.answer(("✅ " if q in sel else "Прибрано ") + q)
+
+
+@dp.callback_query(F.data == "qd")
+async def cb_queue_done(c: CallbackQuery):
+    if not await cb_guard(c):
+        return
+    sub = db.get(c.message.chat.id)
+    if not sub or not sub.queues:
+        return await c.answer("Познач хоча б одну чергу", show_alert=True)
+    await c.message.edit_text("Готово!\n\n" + describe(sub) + "\n\n" + schedule_text(sub),
+                              reply_markup=svet_kb(sub))
     await c.message.answer("Кнопки меню — внизу 👇", reply_markup=MENU)
     await c.answer()
 

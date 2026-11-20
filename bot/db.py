@@ -46,8 +46,12 @@ class Sub:
     oblast: str | None
     raion: str | None
     power: str | None
-    queue: str | None
+    queue: str | None  # одна или несколько через запятую: "1.1,3.2"
     remind: int
+
+    @property
+    def queues(self) -> list[str]:
+        return [q for q in (self.queue or "").split(",") if q]
 
 
 class DB:
@@ -123,10 +127,19 @@ class DB:
         self.c.commit()
 
     # ----- итоговый график подписчика -----
-    def schedule_for(self, sub: Sub, from_day: str) -> dict[str, list]:
-        base = self.sched_get(sub.power, sub.queue) if sub.power and sub.queue else {}
+    def schedule_for(self, sub: Sub, from_day: str, queue: str | None = None) -> dict[str, list]:
+        """График одной очереди (по умолчанию первой выбранной) с ручными правками чата."""
+        queue = queue or (sub.queues[0] if sub.queues else None)
+        base = self.sched_get(sub.power, queue) if sub.power and queue else {}
         base.update(self.overrides(sub.chat_id))
         return {d: iv for d, iv in sorted(base.items()) if d >= from_day}
+
+    def schedules_for(self, sub: Sub, from_day: str) -> dict[str, dict[str, list]]:
+        """{queue: {day: intervals}} по всем выбранным очередям (без очереди — только ручные)."""
+        if not sub.queues:
+            manual = self.schedule_for(sub, from_day)
+            return {"": manual} if manual else {}
+        return {q: self.schedule_for(sub, from_day, q) for q in sub.queues}
 
     # ----- напоминания -----
     def was_sent(self, chat_id: int, key: str) -> bool:
