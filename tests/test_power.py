@@ -63,3 +63,20 @@ def test_db_sched_day_all_queues():
     db.sched_put("kyiv", "2.1", "2026-11-20", [])
     db.sched_put("kyiv", "1.1", "2026-11-21", [["10:00", "12:00"]])
     assert db.sched_day("kyiv", "2026-11-20") == {"1.1": [["06:00", "09:00"]], "2.1": []}
+
+
+def test_db_multiple_queues_with_override():
+    db = DB(":memory:")
+    db.ensure(1, "me")
+    db.update(1, power="kyiv", queue="1.1,3.1")
+    db.sched_put("kyiv", "1.1", "2026-11-20", [["06:00", "09:00"]])
+    db.sched_put("kyiv", "3.1", "2026-11-20", [["10:00", "12:00"]])
+    sub = db.get(1)
+    assert sub.queues == ["1.1", "3.1"]
+    assert db.schedules_for(sub, "2026-11-20") == {
+        "1.1": {"2026-11-20": [["06:00", "09:00"]]},
+        "3.1": {"2026-11-20": [["10:00", "12:00"]]}}
+    db.override_put(1, "2026-11-20", [])
+    assert db.schedules_for(sub, "2026-11-20") == {"1.1": {"2026-11-20": []}, "3.1": {"2026-11-20": []}}
+    db.update(1, queue=None)
+    assert db.schedules_for(db.get(1), "2026-11-20") == {"": {"2026-11-20": []}}
