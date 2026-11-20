@@ -9,7 +9,8 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter, TelegramBadRequest
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import (BotCommand, CallbackQuery, InlineKeyboardButton,
-                           InlineKeyboardMarkup, Message)
+                           InlineKeyboardMarkup, KeyboardButton, Message,
+                           ReplyKeyboardMarkup)
 
 from . import alerts, config, power
 from .config import TZ
@@ -36,7 +37,7 @@ HELP = (
     "/svet 06:00-09:00 15-18 — вказати графік вручну на сьогодні\n"
     "/svet zavtra 00-03 — вручну на завтра, /svet - — сьогодні без відключень\n"
     "/svet clear — прибрати ручні правки\n"
-    "/remind 30 — за скільки хвилин попереджати\n"
+    "/remind 30 — за скільки хвилин попереджати (0 — вимкнути)\n"
     "/stop — відписатися\n\n"
     "У групі змінювати налаштування можуть лише адміни."
 )
@@ -78,6 +79,22 @@ async def send(chat_id: int, text: str):
             return
 
 
+BTN_SVET = "💡 Графік світла"
+BTN_STATUS = "🚨 Тривоги зараз"
+BTN_SETTINGS = "⚙️ Налаштування"
+BTN_HELP = "❓ Допомога"
+MENU = ReplyKeyboardMarkup(
+    keyboard=[[KeyboardButton(text=BTN_SVET), KeyboardButton(text=BTN_STATUS)],
+              [KeyboardButton(text=BTN_SETTINGS), KeyboardButton(text=BTN_HELP)]],
+    resize_keyboard=True, is_persistent=True)
+REMIND_CHOICES = [0, 10, 15, 30, 60]
+
+
+def settings_kb() -> InlineKeyboardMarkup:
+    return kb([[("📍 Область", "set:ob"), ("💡 Світло і черга", "set:pw")],
+               [("⏰ Нагадування", "set:rm"), ("🔎 Райони", "set:rn")]])
+
+
 def kb(rows: list[list[tuple[str, str]]]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=t, callback_data=d) for t, d in row] for row in rows])
@@ -114,7 +131,7 @@ def describe(sub: Sub) -> str:
         lines.append(f"💡 Світло: {POWER_SOURCES[sub.power][0]}, черга {sub.queue or '—'}")
     else:
         lines.append("💡 Графік світла: вимкнено")
-    lines.append(f"⏰ Нагадування за {sub.remind} хв")
+    lines.append(f"⏰ Нагадування за {sub.remind} хв" if sub.remind else "⏰ Нагадування вимкнено")
     return "\n".join(lines)
 
 
@@ -176,6 +193,8 @@ async def reminder_loop():
         now = datetime.now(TZ)
         since = (now.date() - timedelta(days=1)).isoformat()
         for sub in db.all():
+            if not sub.remind:
+                continue
             by_day = db.schedule_for(sub, since)
             for key, kind, t in power.due_reminders(by_day, now, sub.remind):
                 if db.was_sent(sub.chat_id, key):
@@ -229,21 +248,24 @@ async def cmd_start(m: Message):
     if not await guard(m):
         return
     db.ensure(m.chat.id, chat_title(m))
-    await m.answer("Привіт! Обери область для тривог:", reply_markup=oblast_kb())
+    await m.answer("Привіт! Кнопки меню — внизу екрана 👇", reply_markup=MENU)
+    await m.answer("Обери область для тривог:", reply_markup=oblast_kb())
 
 
 @dp.message(Command("help"))
+@dp.message(Command("menu"))
+@dp.message(F.text == BTN_HELP)
 async def cmd_help(m: Message):
-    await m.answer(HELP)
+    await m.answer(HELP, reply_markup=MENU)
 
 
 @dp.message(Command("settings"))
+@dp.message(F.text == BTN_SETTINGS)
 async def cmd_settings(m: Message):
     sub = db.get(m.chat.id)
     if not sub:
         return await m.answer("Ще не налаштовано. Натисни /start")
-    await m.answer(describe(sub), reply_markup=kb([
-        [("Змінити область", "set:ob"), ("Змінити світло", "set:pw")]]))
+    await m.answer(describe(sub) + "\n\nЩо змінити?", reply_markup=settings_kb())
 
 
 @dp.message(Command("stop"))
@@ -255,6 +277,7 @@ async def cmd_stop(m: Message):
 
 
 @dp.message(Command("status"))
+@dp.message(F.text == BTN_STATUS)
 async def cmd_status(m: Message):
     sub = db.get(m.chat.id)
     if not sub or not sub.oblast:
@@ -297,6 +320,12 @@ async def cmd_remind(m: Message, command: CommandObject):
         return await m.answer("Вкажи хвилини від 0 до 180, напр. /remind 30")
     db.update(m.chat.id, remind=n)
     await m.answer(f"⏰ Нагадуватиму за {n} хв")
+
+
+@dp.message(F.text == BTN_SVET)
+async def btn_svet(m: Message):
+    sub = db.get(m.chat.id)
+    await m.answer(schedule_text(sub) if sub else "Спочатку /start")
 
 
 @dp.message(Command("svet"))
@@ -342,8 +371,37 @@ async def cb_set(c: CallbackQuery):
     sub = db.get(c.message.chat.id)
     if c.data == "set:ob" or not sub:
         await c.message.edit_text("Обери область для тривог:", reply_markup=oblast_kb())
+    elif c.data == "set:rm":
+        btns = [("вимкнути" if n == 0 else f"{n} хв", f"rm:{n}") for n in REMIND_CHOICES]
+        await c.message.edit_text(f"Зараз: за {sub.remind} хв. За скільки попереджати "
+                                  "про відключення і включення?", reply_markup=kb([btns]))
+    elif c.data == "set:rn":
+        await c.message.edit_text(
+            f"🔎 Фільтр: {sub.raion or 'вся область'}\n\n"
+            "Щоб отримувати тривоги лише на всю область + свої райони/громади, надішли:\n"
+            "/raion Ніжинський, Бахмацька",
+            reply_markup=kb([[("Вся область", "rn:clear")]]))
     else:
         await c.message.edit_text("Чий графік відключень світла?", reply_markup=power_kb(sub.oblast))
+    await c.answer()
+
+
+@dp.callback_query(F.data.startswith("rm:"))
+async def cb_remind(c: CallbackQuery):
+    if not await cb_guard(c):
+        return
+    n = int(c.data[3:])
+    db.update(c.message.chat.id, remind=n)
+    await c.message.edit_text(describe(db.get(c.message.chat.id)), reply_markup=settings_kb())
+    await c.answer("Без нагадувань" if n == 0 else f"Нагадуватиму за {n} хв")
+
+
+@dp.callback_query(F.data == "rn:clear")
+async def cb_raion_clear(c: CallbackQuery):
+    if not await cb_guard(c):
+        return
+    db.update(c.message.chat.id, raion=None)
+    await c.message.edit_text(describe(db.get(c.message.chat.id)), reply_markup=settings_kb())
     await c.answer()
 
 
@@ -372,7 +430,8 @@ async def cb_power(c: CallbackQuery):
         return await c.answer()
     if key == "-":
         db.update(chat_id, power=None, queue=None)
-        await c.message.edit_text("Готово!\n\n" + describe(db.get(chat_id)) + "\n\n/help — команди")
+        await c.message.edit_text("Готово!\n\n" + describe(db.get(chat_id)))
+        await c.message.answer("Кнопки меню — внизу 👇", reply_markup=MENU)
         return await c.answer()
     await c.answer("Завантажую графік…")
     try:
@@ -394,8 +453,8 @@ async def cb_queue(c: CallbackQuery):
     chat_id = c.message.chat.id
     db.update(chat_id, queue=c.data[2:])
     sub = db.get(chat_id)
-    await c.message.edit_text("Готово!\n\n" + describe(sub) + "\n\n" + schedule_text(sub)
-                              + "\n\n/help — усі команди")
+    await c.message.edit_text("Готово!\n\n" + describe(sub) + "\n\n" + schedule_text(sub))
+    await c.message.answer("Кнопки меню — внизу 👇", reply_markup=MENU)
     await c.answer()
 
 
