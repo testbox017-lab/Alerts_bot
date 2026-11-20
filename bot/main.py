@@ -135,6 +135,24 @@ def describe(sub: Sub) -> str:
     return "\n".join(lines)
 
 
+def svet_kb(sub: Sub) -> InlineKeyboardMarkup | None:
+    return kb([[("📋 Всі черги", "all:0")]]) if sub.power else None
+
+
+def all_queues_text(sub: Sub, offset: int) -> str:
+    day = (datetime.now(TZ).date() + timedelta(days=offset)).isoformat()
+    data = db.sched_day(sub.power, day)
+    title = f"📋 {POWER_SOURCES[sub.power][0]}, {'сьогодні' if offset == 0 else 'завтра'} "
+    if not data:
+        return title + f"({power.fmt_day(day, [])[:5]}): графіка ще немає"
+    lines = []
+    for q in sorted(data, key=power.queue_sort_key):
+        body = ", ".join(f"{a}–{b}" for a, b in data[q]) or "без відключень"
+        mark = "👉 " if q == sub.queue else ""
+        lines.append(f"{mark}{q}: {body}")
+    return title + f"({power.fmt_day(day, [])[:5]})\n" + "\n".join(lines)
+
+
 def schedule_text(sub: Sub) -> str:
     data = db.schedule_for(sub, today())
     if not data:
@@ -325,7 +343,9 @@ async def cmd_remind(m: Message, command: CommandObject):
 @dp.message(F.text == BTN_SVET)
 async def btn_svet(m: Message):
     sub = db.get(m.chat.id)
-    await m.answer(schedule_text(sub) if sub else "Спочатку /start")
+    if not sub:
+        return await m.answer("Спочатку /start")
+    await m.answer(schedule_text(sub), reply_markup=svet_kb(sub))
 
 
 @dp.message(Command("svet"))
@@ -335,7 +355,7 @@ async def cmd_svet(m: Message, command: CommandObject):
         return await m.answer("Спочатку /start")
     args = (command.args or "").split()
     if not args:
-        return await m.answer(schedule_text(sub))
+        return await m.answer(schedule_text(sub), reply_markup=svet_kb(sub))
     if not await guard(m):
         return
     if args[0] == "clear":
@@ -383,6 +403,20 @@ async def cb_set(c: CallbackQuery):
             reply_markup=kb([[("Вся область", "rn:clear")]]))
     else:
         await c.message.edit_text("Чий графік відключень світла?", reply_markup=power_kb(sub.oblast))
+    await c.answer()
+
+
+@dp.callback_query(F.data.startswith("all:"))
+async def cb_all_queues(c: CallbackQuery):
+    sub = db.get(c.message.chat.id)
+    if not sub or not sub.power:
+        return await c.answer("Спочатку обери постачальника в ⚙️ Налаштування", show_alert=True)
+    offset = int(c.data[4:])
+    other = ("➡️ Завтра", "all:1") if offset == 0 else ("⬅️ Сьогодні", "all:0")
+    try:
+        await c.message.edit_text(all_queues_text(sub, offset), reply_markup=kb([[other]]))
+    except TelegramBadRequest:  # текст не изменился
+        pass
     await c.answer()
 
 
