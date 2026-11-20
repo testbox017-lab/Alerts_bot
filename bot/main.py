@@ -259,6 +259,8 @@ async def cmd_status(m: Message):
     sub = db.get(m.chat.id)
     if not sub or not sub.oblast:
         return await m.answer("Спочатку обери область: /start")
+    if not config.ALERTS_TOKEN:
+        return await m.answer("Тривоги ще не підключені (немає токена API).")
     try:
         cur = await fetch_alerts()
     except Exception as e:  # noqa: BLE001
@@ -401,8 +403,10 @@ async def cb_queue(c: CallbackQuery):
 async def main():
     global db, bot, http
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    if not config.BOT_TOKEN or not config.ALERTS_TOKEN:
-        raise SystemExit("Задай BOT_TOKEN и ALERTS_TOKEN в .env")
+    if not config.BOT_TOKEN:
+        raise SystemExit("Задай BOT_TOKEN в .env")
+    if not config.ALERTS_TOKEN:
+        log.warning("ALERTS_TOKEN не задан — тревоги выключены, работают только графики света")
     db = DB()
     bot = Bot(config.BOT_TOKEN)
     http = aiohttp.ClientSession()
@@ -413,7 +417,8 @@ async def main():
         BotCommand(command="settings", description="Налаштування"),
         BotCommand(command="help", description="Довідка"),
     ])
-    tasks = [asyncio.create_task(f()) for f in (alerts_loop, power_loop, reminder_loop)]
+    loops = [power_loop, reminder_loop] + ([alerts_loop] if config.ALERTS_TOKEN else [])
+    tasks = [asyncio.create_task(f()) for f in loops]
     try:
         await dp.start_polling(bot)
     finally:

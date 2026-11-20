@@ -42,7 +42,7 @@ nano .env   # вставить содержимое .env.example и заполн
 ```
 
 - `BOT_TOKEN` — у [@BotFather](https://t.me/BotFather) (`/newbot`);
-- `ALERTS_TOKEN` — запросить на [devs.alerts.in.ua](https://devs.alerts.in.ua).
+- `ALERTS_TOKEN` — запросить на [devs.alerts.in.ua](https://devs.alerts.in.ua). Без него бот тоже запустится, но только с графиками света; после добавления токена выполните `cd ~/alerts_bot && docker compose up -d --force-recreate`.
 
 Дальше всё делает GitHub Actions.
 
