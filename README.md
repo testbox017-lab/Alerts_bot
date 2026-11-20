@@ -4,7 +4,7 @@
 
 Telegram-бот для себя, семьи или группы:
 
-- 🚨 **воздушные тревоги** по выбранной области (можно сузить до районов/громад) — источник [alerts.in.ua](https://alerts.in.ua);
+- 🚨 **воздушные тревоги** по выбранной области (можно сузить до районов/громад) — источник: API приложения «Повітряна тривога» ([ukrainealarm.com](https://api.ukrainealarm.com)) или [alerts.in.ua](https://alerts.in.ua);
 - 💡 **графики отключений света** по вашей очереди с напоминанием за N минут до отключения и включения. Графики берутся из открытых сборщиков [OE_OUTAGE_DATA](https://github.com/yaroslav2901/OE_OUTAGE_DATA) и [outage-data-ua](https://github.com/Baskerville42/outage-data-ua).
 
 Каждый чат (личка или группа) настраивает свою область и очередь кнопками через `/start`. Очередей можно отметить до 5 (например, дом и дача): график и напоминания приходят по каждой отдельно.
@@ -46,7 +46,10 @@ nano .env   # вставить содержимое .env.example и заполн
 ```
 
 - `BOT_TOKEN` — у [@BotFather](https://t.me/BotFather) (`/newbot`);
-- `ALERTS_TOKEN` — запросить на [devs.alerts.in.ua](https://devs.alerts.in.ua). Без него бот тоже запустится, но только с графиками света; после добавления токена выполните `cd ~/alerts_bot && docker compose up -d --force-recreate`.
+- Тревоги работают **без ключа**: по умолчанию бот берёт данные из публичного зеркала API «Повітряна тривога» (siren.pp.ua). Для надёжности можно добавить свой ключ (бот выберет первый доступный):
+  - `UKRAINEALARM_TOKEN` — официальный API «Повітряна тривога», форма запроса ключа на [api.ukrainealarm.com](https://api.ukrainealarm.com);
+  - `ALERTS_TOKEN` — [devs.alerts.in.ua](https://devs.alerts.in.ua).
+  Принудительно выбрать источник: `ALERTS_SOURCE=ukrainealarm|alertsinua|mirror`. После изменения `.env`: `cd ~/alerts_bot && docker compose up -d --force-recreate`.
 
 Дальше всё делает GitHub Actions.
 

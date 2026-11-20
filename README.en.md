@@ -4,7 +4,7 @@
 
 A Telegram bot for Ukraine that tells you, your family or your group chat about:
 
-- 🚨 **air-raid alerts** in a chosen oblast (optionally narrowed down to specific raions/hromadas), from [alerts.in.ua](https://alerts.in.ua);
+- 🚨 **air-raid alerts** in a chosen oblast (optionally narrowed down to specific raions/hromadas), from the "Povitriana tryvoha" app API ([ukrainealarm.com](https://api.ukrainealarm.com)) or [alerts.in.ua](https://alerts.in.ua);
 - 💡 **scheduled power outages** for your queue, with a reminder N minutes before the power goes off and comes back. Schedules come from the open data collectors [OE_OUTAGE_DATA](https://github.com/yaroslav2901/OE_OUTAGE_DATA) and [outage-data-ua](https://github.com/Baskerville42/outage-data-ua).
 
 Every chat (private or group) picks its own oblast and queue with buttons after `/start`, so people in different regions can use the same bot.
@@ -48,7 +48,10 @@ nano .env   # paste the contents of .env.example and fill in the tokens
 ```
 
 - `BOT_TOKEN`: from [@BotFather](https://t.me/BotFather) (`/newbot`);
-- `ALERTS_TOKEN`: request one at [devs.alerts.in.ua](https://devs.alerts.in.ua). The bot also starts without it, but then only with power schedules. After adding the token run `cd ~/alerts_bot && docker compose up -d --force-recreate`.
+- Alerts work **without a key**: by default the bot reads the public mirror of the ukrainealarm.com API (siren.pp.ua). For reliability you can add your own key (the bot picks the first one set):
+  - `UKRAINEALARM_TOKEN`: official ukrainealarm.com API, request form at [api.ukrainealarm.com](https://api.ukrainealarm.com);
+  - `ALERTS_TOKEN`: [devs.alerts.in.ua](https://devs.alerts.in.ua).
+  Force a source with `ALERTS_SOURCE=ukrainealarm|alertsinua|mirror`. After editing `.env` run `cd ~/alerts_bot && docker compose up -d --force-recreate`.
 
 Everything else is done by GitHub Actions.
 
@@ -84,7 +87,7 @@ While the secrets are not set, the deploy step is skipped with a warning.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `ALERTS_POLL_SECONDS` | 30 | how often to poll alerts.in.ua |
+| `ALERTS_POLL_SECONDS` | 30 | how often to poll the alert source |
 | `POWER_POLL_SECONDS` | 600 | how often to refresh power schedules |
 | `DB_PATH` | data/bot.db | SQLite database path |
 | `DEFAULT_REMIND` | 30 | default reminder lead time, minutes |
