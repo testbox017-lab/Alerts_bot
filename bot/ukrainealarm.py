@@ -58,9 +58,8 @@ def convert(alerts_json: list, regions: dict[str, dict]) -> dict[str, dict]:
     res: dict[str, dict] = {}
     for entry in alerts_json or []:
         for a in entry.get("activeAlerts") or []:
-            levels = {lv.get("alertLevel") for lv in a.get("activeAlertLevels") or []}
-            if levels and "Red" not in levels:
-                continue  # только «жовтий» рівень — попередня загроза, не тривога
+            # alertLevel (Red/Yellow) не фильтруем: «Yellow» — тоже настоящая тревога,
+            # regionHistory пишет её как AIR (проверено 2026-11-22, Ніжинський район).
             rid = str(a.get("regionId") or entry.get("regionId"))
             reg = regions.get(rid)
             if reg is None:

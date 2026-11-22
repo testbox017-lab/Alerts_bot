@@ -67,6 +67,7 @@ async def send(chat_id: int, text: str):
     for _ in range(2):
         try:
             await bot.send_message(chat_id, text, disable_web_page_preview=True)
+            log.info("sent to %s: %s", chat_id, text[:80])
             return
         except TelegramRetryAfter as e:
             await asyncio.sleep(e.retry_after + 1)
@@ -263,6 +264,8 @@ async def alerts_loop():
                 new = [current[k] for k in current.keys() - known.keys()]
                 gone = [known[k] for k in known.keys() - current.keys()]
                 if new or gone:
+                    log.info("alerts: +%s -%s", [a["location_title"] for a in new],
+                             [a["location_title"] for a in gone])
                     for sub in db.all():
                         for a in new:
                             if alerts.matches(a, sub.oblast, sub.raion):
