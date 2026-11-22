@@ -69,10 +69,18 @@ async def is_admin(chat_id: int, chat_type: str, user_id: int) -> bool:
     return member.status in ("creator", "administrator")
 
 
+async def reply(m: Message, text: str, reply_markup=None, **kw):
+    """Ответ в чат. Без своей inline-клавиатуры прикладываем главное меню,
+    чтобы нижние кнопки не пропадали (Telegram иногда их теряет: другое устройство,
+    очистка истории, старое сообщение с меню удалено)."""
+    return await m.answer(text, reply_markup=reply_markup or MENU, **kw)
+
+
 async def send(chat_id: int, text: str):
     for _ in range(2):
         try:
-            await bot.send_message(chat_id, text, disable_web_page_preview=True)
+            await bot.send_message(chat_id, text, disable_web_page_preview=True,
+                                   reply_markup=MENU)
             log.info("sent to %s: %s", chat_id, text[:80])
             return
         except TelegramRetryAfter as e:
@@ -308,7 +316,7 @@ async def alerts_loop():
 async def guard(m: Message) -> bool:
     if await is_admin(m.chat.id, m.chat.type, m.from_user.id):
         return True
-    await m.answer("Змінювати налаштування в групі можуть лише адміни.")
+    await reply(m, "Змінювати налаштування в групі можуть лише адміни.")
     return False
 
 
@@ -317,15 +325,15 @@ async def cmd_start(m: Message):
     if not await guard(m):
         return
     db.ensure(m.chat.id, chat_title(m))
-    await m.answer("Привіт! Кнопки меню — внизу екрана 👇", reply_markup=MENU)
-    await m.answer("Обери область для тривог:", reply_markup=oblast_kb())
+    await reply(m, "Привіт! Кнопки меню — внизу екрана 👇", reply_markup=MENU)
+    await reply(m, "Обери область для тривог:", reply_markup=oblast_kb())
 
 
 @dp.message(Command("help"))
 @dp.message(Command("menu"))
 @dp.message(F.text == BTN_HELP)
 async def cmd_help(m: Message):
-    await m.answer(f"{HELP}\n\nДжерело тривог: {alerts.source_name()}", reply_markup=MENU)
+    await reply(m, f"{HELP}\n\nДжерело тривог: {alerts.source_name()}", reply_markup=MENU)
 
 
 @dp.message(Command("settings"))
@@ -333,8 +341,8 @@ async def cmd_help(m: Message):
 async def cmd_settings(m: Message):
     sub = db.get(m.chat.id)
     if not sub:
-        return await m.answer("Ще не налаштовано. Натисни /start")
-    await m.answer(describe(sub) + "\n\nЩо змінити?", reply_markup=settings_kb())
+        return await reply(m, "Ще не налаштовано. Натисни /start")
+    await reply(m, describe(sub) + "\n\nЩо змінити?", reply_markup=settings_kb())
 
 
 @dp.message(Command("stop"))
@@ -342,7 +350,7 @@ async def cmd_stop(m: Message):
     if not await guard(m):
         return
     db.delete(m.chat.id)
-    await m.answer("Відписано. Повернутися: /start")
+    await reply(m, "Відписано. Повернутися: /start")
 
 
 @dp.message(Command("status"))
@@ -350,67 +358,67 @@ async def cmd_stop(m: Message):
 async def cmd_status(m: Message):
     sub = db.get(m.chat.id)
     if not sub or not sub.oblast:
-        return await m.answer("Спочатку обери область: /start")
+        return await reply(m, "Спочатку обери область: /start")
     try:
         cur = await fetch_alerts()
     except Exception as e:  # noqa: BLE001
-        return await m.answer(f"Помилка API тривог: {e}")
+        return await reply(m, f"Помилка API тривог: {e}")
     mine = [alerts.fmt_alert(a) for a in cur.values() if alerts.matches(a, sub.oblast, sub.raion)]
     text = "\n".join(sorted(mine)) if mine else "🟢 Тривог немає"
-    await m.answer(f"{text}\n\nДжерело: {alerts.source_name()}")
+    await reply(m, f"{text}\n\nДжерело: {alerts.source_name()}")
 
 
 @dp.message(Command("raion"))
 async def cmd_raion(m: Message, command: CommandObject):
     sub = db.get(m.chat.id)
     if not sub:
-        return await m.answer("Спочатку /start")
+        return await reply(m, "Спочатку /start")
     arg = (command.args or "").strip()
     if not arg:
-        return await m.answer(f"Фільтр: {sub.raion or 'вся область'}\n"
+        return await reply(m, f"Фільтр: {sub.raion or 'вся область'}\n"
                               "Приклад: /raion Ніжинський, Бахмацька")
     if not await guard(m):
         return
     db.update(m.chat.id, raion=None if arg.lower() in ("clear", "-") else arg)
-    await m.answer(describe(db.get(m.chat.id)))
+    await reply(m, describe(db.get(m.chat.id)))
 
 
 @dp.message(Command("remind"))
 async def cmd_remind(m: Message, command: CommandObject):
     if not db.get(m.chat.id):
-        return await m.answer("Спочатку /start")
+        return await reply(m, "Спочатку /start")
     if not await guard(m):
         return
     try:
         n = int((command.args or "").strip())
         assert 0 <= n <= 180
     except (ValueError, AssertionError):
-        return await m.answer("Вкажи хвилини від 0 до 180, напр. /remind 30")
+        return await reply(m, "Вкажи хвилини від 0 до 180, напр. /remind 30")
     db.update(m.chat.id, remind=n)
-    await m.answer(f"⏰ Нагадуватиму за {n} хв")
+    await reply(m, f"⏰ Нагадуватиму за {n} хв")
 
 
 @dp.message(F.text == BTN_SVET)
 async def btn_svet(m: Message):
     sub = db.get(m.chat.id)
     if not sub:
-        return await m.answer("Спочатку /start")
-    await m.answer(schedule_text(sub), reply_markup=svet_kb(sub))
+        return await reply(m, "Спочатку /start")
+    await reply(m, schedule_text(sub), reply_markup=svet_kb(sub))
 
 
 @dp.message(Command("svet"))
 async def cmd_svet(m: Message, command: CommandObject):
     sub = db.get(m.chat.id)
     if not sub:
-        return await m.answer("Спочатку /start")
+        return await reply(m, "Спочатку /start")
     args = (command.args or "").split()
     if not args:
-        return await m.answer(schedule_text(sub), reply_markup=svet_kb(sub))
+        return await reply(m, schedule_text(sub), reply_markup=svet_kb(sub))
     if not await guard(m):
         return
     if args[0] == "clear":
         db.override_clear(m.chat.id)
-        return await m.answer("Ручні правки прибрано.\n" + schedule_text(sub))
+        return await reply(m, "Ручні правки прибрано.\n" + schedule_text(sub))
     day = datetime.now(TZ).date()
     if args[0].lower() in ("zavtra", "завтра"):
         day += timedelta(days=1)
@@ -421,9 +429,9 @@ async def cmd_svet(m: Message, command: CommandObject):
         try:
             intervals = power.parse_intervals(args)
         except ValueError as e:
-            return await m.answer(f"Не зрозумів інтервал: {e}\nПриклад: /svet 06:00-09:00 15-18")
+            return await reply(m, f"Не зрозумів інтервал: {e}\nПриклад: /svet 06:00-09:00 15-18")
     db.override_put(m.chat.id, day.isoformat(), intervals)
-    await m.answer("✍️ " + power.fmt_day(day.isoformat(), intervals))
+    await reply(m, "✍️ " + power.fmt_day(day.isoformat(), intervals))
 
 
 # ---------- кнопки ----------
@@ -515,7 +523,7 @@ async def cb_power(c: CallbackQuery):
     if key == "-":
         db.update(chat_id, power=None, queue=None)
         await c.message.edit_text("Готово!\n\n" + describe(db.get(chat_id)))
-        await c.message.answer("Кнопки меню — внизу 👇", reply_markup=MENU)
+        await reply(c.message, "Кнопки меню — внизу 👇", reply_markup=MENU)
         return await c.answer()
     await c.answer("Завантажую графік…")
     try:
@@ -569,8 +577,14 @@ async def cb_queue_done(c: CallbackQuery):
         return await c.answer("Познач хоча б одну чергу", show_alert=True)
     await c.message.edit_text("Готово!\n\n" + describe(sub) + "\n\n" + schedule_text(sub),
                               reply_markup=svet_kb(sub))
-    await c.message.answer("Кнопки меню — внизу 👇", reply_markup=MENU)
+    await reply(c.message, "Кнопки меню — внизу 👇", reply_markup=MENU)
     await c.answer()
+
+
+@dp.message(F.chat.type == "private")
+async def fallback(m: Message):
+    # любое непонятное сообщение в личке возвращает кнопки меню
+    await reply(m, "Кнопки меню — внизу 👇")
 
 
 # ---------- запуск ----------
