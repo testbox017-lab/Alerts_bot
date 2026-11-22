@@ -54,9 +54,46 @@ def queue_sort_key(q: str) -> list[int]:
 
 
 async def fetch_source(session: aiohttp.ClientSession, url: str):
+    """-> (расписание, текст времени обновления, lastUpdated как datetime или None)."""
     async with session.get(url, timeout=aiohttp.ClientTimeout(total=20)) as r:
         r.raise_for_status()
-        return parse_source(json.loads(await r.text()))
+        d = json.loads(await r.text())
+    data, upd = parse_source(d)
+    return data, upd, last_updated(d)
+
+
+def last_updated(d: dict) -> datetime | None:
+    """Поле lastUpdated источника (ISO, UTC). Источники обновляют его минимум раз в сутки
+    (около 00:05 переходят на новый день), поэтому по нему видно, что сборщик жив."""
+    try:
+        return datetime.fromisoformat(d["lastUpdated"].replace("Z", "+00:00"))
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return None
+
+
+def health_problem(now: datetime, last_ok: datetime, updated_at: datetime | None) -> str | None:
+    """Что не так с источником графика: "unreachable", "stale" или None.
+
+    unreachable — дольше POWER_UNREACHABLE_MIN не удаётся загрузить JSON;
+    stale — lastUpdated старше POWER_STALE_HOURS (сборщик перестал работать).
+    """
+    if now - last_ok >= timedelta(minutes=config.POWER_UNREACHABLE_MIN):
+        return "unreachable"
+    if updated_at and now - updated_at >= timedelta(hours=config.POWER_STALE_HOURS):
+        return "stale"
+    return None
+
+
+def fmt_health(problem: str | None, name: str, updated_at: datetime | None, site: str | None) -> str:
+    check = f"\nПеревір графік на сайті: {site}" if site else "\nПеревір графік на сайті обленерго."
+    if problem == "unreachable":
+        return (f"⚠️ Не вдається завантажити графік «{name}» вже понад "
+                f"{config.POWER_UNREACHABLE_MIN} хв. Графік у боті може бути застарілим.{check}")
+    if problem == "stale":
+        when = f" (останнє: {updated_at.astimezone(TZ):%d.%m %H:%M})" if updated_at else ""
+        return (f"⚠️ Графік «{name}» не оновлювався понад {config.POWER_STALE_HOURS} год{when}. "
+                f"Можливо, джерело перестало працювати.{check}")
+    return f"✅ Графік «{name}» знову оновлюється."
 
 
 # ---------- ручной ввод ----------

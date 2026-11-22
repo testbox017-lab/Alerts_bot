@@ -24,6 +24,12 @@ bot: Bot
 http: aiohttp.ClientSession
 # последняя загрузка каждого источника: {src: ({queue: {day: iv}}, update_str)}
 source_cache: dict[str, tuple[dict, str]] = {}
+# состояние источников графиков: последняя удачная загрузка, lastUpdated, текущая проблема
+power_ok_at: dict[str, datetime] = {}
+power_updated_at: dict[str, datetime | None] = {}
+power_problem: dict[str, str | None] = {}
+# официальные страницы графиков, на которые отправляем при проблемах с источником
+POWER_SITES = {"chernihiv": "https://chernihivoblenergo.com.ua/blackouts"}
 
 HELP = (
     "Я надсилаю повітряні тривоги по твоїй області (або району) і нагадую про "
@@ -183,8 +189,10 @@ def schedule_text(sub: Sub) -> str:
 # ---------- источники графиков ----------
 async def refresh_source(src: str) -> dict[str, list[str]]:
     """Загружает источник, сохраняет в БД. Возвращает {queue: [изменённые дни]}."""
-    data, upd = await power.fetch_source(http, POWER_SOURCES[src][1])
+    data, upd, updated_at = await power.fetch_source(http, POWER_SOURCES[src][1])
     source_cache[src] = (data, upd)
+    power_ok_at[src] = datetime.now(TZ)
+    power_updated_at[src] = updated_at
     first = not db.sched_has(src)
     t = today()
     changed: dict[str, list[str]] = {}
@@ -199,15 +207,32 @@ async def refresh_source(src: str) -> dict[str, list[str]]:
     return changed
 
 
+async def check_power_health(src: str):
+    """Один раз предупреждаем подписчиков источника о проблеме и один раз — когда прошла."""
+    problem = power.health_problem(datetime.now(TZ), power_ok_at[src], power_updated_at.get(src))
+    if problem == power_problem.get(src):
+        return
+    was = power_problem.get(src)
+    power_problem[src] = problem
+    log.warning("power source %s health: %s -> %s", src, was, problem)
+    text = power.fmt_health(problem, POWER_SOURCES[src][0], power_updated_at.get(src),
+                            POWER_SITES.get(src))
+    for sub in db.all():
+        if sub.power == src:
+            await send(sub.chat_id, text)
+
+
 async def power_loop():
     while True:
         db.cleanup((datetime.now(TZ).date() - timedelta(days=1)).isoformat())
         for src in db.used_sources():
+            power_ok_at.setdefault(src, datetime.now(TZ))  # отсчёт «не грузится» — с запуска
             try:
                 changed = await refresh_source(src)
             except Exception as e:  # noqa: BLE001
                 log.warning("power source %s: %s", src, e)
-                continue
+                changed = {}
+            await check_power_health(src)
             if not changed:
                 continue
             upd = source_cache[src][1]

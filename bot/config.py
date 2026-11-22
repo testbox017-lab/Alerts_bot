@@ -20,6 +20,10 @@ DB_PATH = Path(os.environ.get("DB_PATH", "data/bot.db"))
 # alerts.in.ua просит не чаще ~8 запросов в минуту на токен
 ALERTS_POLL_SECONDS = int(os.environ.get("ALERTS_POLL_SECONDS", "30"))
 POWER_POLL_SECONDS = int(os.environ.get("POWER_POLL_SECONDS", "600"))
+# Предупреждать подписчиков, если график не грузится дольше N минут
+# или источник не обновлялся дольше N часов (обычно он обновляется хотя бы раз в сутки)
+POWER_UNREACHABLE_MIN = int(os.environ.get("POWER_UNREACHABLE_MIN", "60"))
+POWER_STALE_HOURS = int(os.environ.get("POWER_STALE_HOURS", "26"))
 DEFAULT_REMIND = int(os.environ.get("DEFAULT_REMIND", "30"))
 # "можливе відключення" (mfirst/msecond) считать отключением
 POSSIBLE_AS_OFF = os.environ.get("POSSIBLE_AS_OFF", "1") == "1"
