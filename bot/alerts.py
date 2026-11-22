@@ -24,15 +24,14 @@ SOURCE_NAMES = {"ukrainealarm": "ukrainealarm.com", "alertsinua": "alerts.in.ua"
 
 log = logging.getLogger("bot")
 
-FALLBACK = "mirror"   # запасной источник, ключ не нужен
-FAILS_TO_SWITCH = 3   # столько ошибок основного подряд — переходим на запасной
-RETRY_PRIMARY = 300   # раз в столько секунд пробуем вернуться на основной
+FAILS_TO_SWITCH = 3   # столько ошибок подряд — переходим на следующий источник цепочки
+RETRY_PRIMARY = 300   # раз в столько секунд пробуем вернуться на более приоритетный
 
 
 class _State:
-    active = ""            # источник, с которого сейчас берём данные
-    fails = 0              # ошибок основного подряд
-    next_primary_try = 0.0
+    idx = 0                # индекс текущего источника в config.ALERTS_CHAIN
+    fails = 0              # ошибок текущего источника подряд
+    next_retry = 0.0
 
 
 state = _State()
@@ -40,7 +39,8 @@ state = _State()
 
 def source_name(source: str | None = None) -> str:
     """Человекочитаемое название источника (по умолчанию — того, что работает сейчас)."""
-    src = source or state.active or config.ALERTS_SOURCE
+    chain = config.ALERTS_CHAIN
+    src = source or chain[min(state.idx, len(chain) - 1)]
     return SOURCE_NAMES.get(src, src)
 
 
@@ -57,36 +57,37 @@ async def _fetch_from(session: aiohttp.ClientSession, source: str) -> dict[str, 
 async def fetch_active(session: aiohttp.ClientSession) -> dict[str, dict]:
     """Все активные тревоги по Украине: {ключ: alert}.
 
-    Берём из основного источника (config.ALERTS_SOURCE). После FAILS_TO_SWITCH
-    ошибок подряд переходим на зеркало siren.pp.ua и раз в RETRY_PRIMARY секунд
-    пробуем вернуться на основной.
+    Источники идут по цепочке config.ALERTS_CHAIN (например alerts.in.ua →
+    ukrainealarm.com → зеркало siren.pp.ua). После FAILS_TO_SWITCH ошибок подряд
+    переходим на следующий, раз в RETRY_PRIMARY секунд пробуем вернуться на
+    более приоритетные.
     """
-    primary = config.ALERTS_SOURCE
-    if not state.active:
-        state.active = primary
-    if primary == FALLBACK:
-        return await _fetch_from(session, primary)
-
-    on_fallback = state.active == FALLBACK
-    if not on_fallback or time.monotonic() >= state.next_primary_try:
-        try:
-            res = await _fetch_from(session, primary)
-        except Exception as e:  # noqa: BLE001
-            state.fails += 1
-            if not on_fallback and state.fails < FAILS_TO_SWITCH:
-                raise
-            if not on_fallback:
-                log.warning("источник %s недоступен (%s ошибок подряд, последняя: %r) — "
-                            "переключаюсь на %s", source_name(primary), state.fails, e,
-                            source_name(FALLBACK))
-                state.active = FALLBACK
-            state.next_primary_try = time.monotonic() + RETRY_PRIMARY
-        else:
-            if on_fallback:
-                log.warning("источник %s снова работает — возвращаюсь на него", source_name(primary))
-            state.active, state.fails = primary, 0
+    chain = config.ALERTS_CHAIN
+    state.idx = min(state.idx, len(chain) - 1)
+    if state.idx > 0 and time.monotonic() >= state.next_retry:
+        state.next_retry = time.monotonic() + RETRY_PRIMARY
+        for i in range(state.idx):
+            try:
+                res = await _fetch_from(session, chain[i])
+            except Exception:  # noqa: BLE001
+                continue
+            log.warning("источник %s снова работает — переключаюсь на него", source_name(chain[i]))
+            state.idx, state.fails = i, 0
             return res
-    return await _fetch_from(session, FALLBACK)
+    cur = chain[state.idx]
+    try:
+        res = await _fetch_from(session, cur)
+    except Exception as e:
+        state.fails += 1
+        if state.fails < FAILS_TO_SWITCH or state.idx == len(chain) - 1:
+            raise
+        state.idx, state.fails = state.idx + 1, 0
+        state.next_retry = time.monotonic() + RETRY_PRIMARY
+        log.warning("источник %s недоступен (%s ошибок подряд, последняя: %r) — переключаюсь на %s",
+                    source_name(cur), FAILS_TO_SWITCH, e, source_name(chain[state.idx]))
+        return await _fetch_from(session, chain[state.idx])
+    state.fails = 0
+    return res
 
 
 async def fetch_alertsinua(session: aiohttp.ClientSession) -> dict[str, dict]:

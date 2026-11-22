@@ -7,11 +7,14 @@ TZ = ZoneInfo("Europe/Kyiv")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 ALERTS_TOKEN = os.environ.get("ALERTS_TOKEN", "")          # alerts.in.ua
 UKRAINEALARM_TOKEN = os.environ.get("UKRAINEALARM_TOKEN", "")  # api.ukrainealarm.com
-# Источник тревог: ukrainealarm (официальный, нужен ключ), alertsinua (нужен ключ)
-# или mirror (siren.pp.ua, зеркало ukrainealarm без ключа). По умолчанию —
-# первый, для которого есть ключ, иначе зеркало.
+# Источники тревог по приоритету: alertsinua (нужен ALERTS_TOKEN),
+# ukrainealarm (нужен UKRAINEALARM_TOKEN), mirror (siren.pp.ua, без ключа, всегда
+# последний). Источники без ключа пропускаются. ALERTS_SOURCE ставит выбранный
+# источник первым в цепочке.
+_AVAILABLE = [s for s, ok in (("alertsinua", ALERTS_TOKEN), ("ukrainealarm", UKRAINEALARM_TOKEN)) if ok]
 ALERTS_SOURCE = os.environ.get("ALERTS_SOURCE", "").strip().lower() or (
-    "ukrainealarm" if UKRAINEALARM_TOKEN else "alertsinua" if ALERTS_TOKEN else "mirror")
+    _AVAILABLE[0] if _AVAILABLE else "mirror")
+ALERTS_CHAIN = list(dict.fromkeys([ALERTS_SOURCE, *_AVAILABLE, "mirror"]))
 DB_PATH = Path(os.environ.get("DB_PATH", "data/bot.db"))
 
 # alerts.in.ua просит не чаще ~8 запросов в минуту на токен
