@@ -80,3 +80,25 @@ def test_db_multiple_queues_with_override():
     assert db.schedules_for(sub, "2026-11-20") == {"1.1": {"2026-11-20": []}, "3.1": {"2026-11-20": []}}
     db.update(1, queue=None)
     assert db.schedules_for(db.get(1), "2026-11-20") == {"": {"2026-11-20": []}}
+
+
+def test_health_problem():
+    from datetime import datetime, timedelta, timezone
+    now = datetime(2026, 11, 22, 15, 0, tzinfo=timezone.utc)
+    upd = power.last_updated({"lastUpdated": "2026-11-21T22:05:37.631Z"})
+    assert upd == datetime(2026, 11, 21, 22, 5, 37, 631000, tzinfo=timezone.utc)
+    assert power.last_updated({}) is None
+    assert power.health_problem(now, now - timedelta(minutes=10), upd) is None
+    assert power.health_problem(now, now - timedelta(minutes=61), upd) == "unreachable"
+    assert power.health_problem(now + timedelta(hours=10), now + timedelta(hours=10), upd) == "stale"
+    assert power.health_problem(now, now, None) is None
+
+
+def test_fmt_health():
+    from datetime import datetime, timezone
+    upd = datetime(2026, 11, 21, 22, 5, tzinfo=timezone.utc)
+    site = "https://chernihivoblenergo.com.ua/blackouts"
+    t = power.fmt_health("stale", "Чернігівобленерго", upd, site)
+    assert "22.11 00:05" in t and site in t and t.startswith("⚠️")
+    assert "понад 60 хв" in power.fmt_health("unreachable", "X", None, None)
+    assert power.fmt_health(None, "X", None, None).startswith("✅")
