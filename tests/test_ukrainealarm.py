@@ -57,7 +57,8 @@ def test_real_shapes_district_alert_under_community_and_yellow():
                 {"regionId": "1293", "regionType": "State", "type": "AIR",
                  "activeAlertLevels": [{"alertLevel": "Red"}]}]}]
     res = convert(data, regions)
-    assert set(res) == {"47|air_raid", "1293|air_raid"}
+    # «Yellow» — тоже тревога, не пропускаем
+    assert set(res) == {"353|air_raid", "47|air_raid", "1293|air_raid"}
     assert res["47|air_raid"]["location_title"] == "Покровський район"
     assert matches(res["47|air_raid"], "Донецька область", "Покровськ")
     assert matches(res["1293|air_raid"], "Харківська область", None)
