@@ -300,7 +300,7 @@ async def cmd_start(m: Message):
 @dp.message(Command("menu"))
 @dp.message(F.text == BTN_HELP)
 async def cmd_help(m: Message):
-    await m.answer(HELP, reply_markup=MENU)
+    await m.answer(f"{HELP}\n\nДжерело тривог: {alerts.source_name()}", reply_markup=MENU)
 
 
 @dp.message(Command("settings"))
@@ -331,7 +331,8 @@ async def cmd_status(m: Message):
     except Exception as e:  # noqa: BLE001
         return await m.answer(f"Помилка API тривог: {e}")
     mine = [alerts.fmt_alert(a) for a in cur.values() if alerts.matches(a, sub.oblast, sub.raion)]
-    await m.answer("\n".join(sorted(mine)) if mine else "🟢 Тривог немає")
+    text = "\n".join(sorted(mine)) if mine else "🟢 Тривог немає"
+    await m.answer(f"{text}\n\nДжерело: {alerts.source_name()}")
 
 
 @dp.message(Command("raion"))
@@ -553,7 +554,7 @@ async def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     if not config.BOT_TOKEN:
         raise SystemExit("Задай BOT_TOKEN в .env")
-    log.info("Источник тревог: %s", alerts.SOURCE_NAMES.get(config.ALERTS_SOURCE, config.ALERTS_SOURCE))
+    log.info("Источник тревог: %s", alerts.source_name())
     db = DB()
     bot = Bot(config.BOT_TOKEN)
     http = aiohttp.ClientSession()
