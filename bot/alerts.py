@@ -19,6 +19,11 @@ SOURCE_NAMES = {"ukrainealarm": "ukrainealarm.com", "alertsinua": "alerts.in.ua"
                 "mirror": "ukrainealarm.com (дзеркало siren.pp.ua)"}
 
 
+def source_name() -> str:
+    """Человекочитаемое название текущего источника тревог."""
+    return SOURCE_NAMES.get(config.ALERTS_SOURCE, config.ALERTS_SOURCE)
+
+
 async def fetch_active(session: aiohttp.ClientSession) -> dict[str, dict]:
     """Все активные тревоги по Украине из настроенного источника: {ключ: alert}."""
     if config.ALERTS_SOURCE == "alertsinua":
