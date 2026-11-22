@@ -1,5 +1,8 @@
 """Тревоги alerts.in.ua: загрузка и фильтр под подписчика (чистые функции)."""
 
+import logging
+import time
+
 import aiohttp
 
 from . import config, ukrainealarm
@@ -19,17 +22,71 @@ SOURCE_NAMES = {"ukrainealarm": "ukrainealarm.com", "alertsinua": "alerts.in.ua"
                 "mirror": "ukrainealarm.com (дзеркало siren.pp.ua)"}
 
 
-def source_name() -> str:
-    """Человекочитаемое название текущего источника тревог."""
-    return SOURCE_NAMES.get(config.ALERTS_SOURCE, config.ALERTS_SOURCE)
+log = logging.getLogger("bot")
+
+FALLBACK = "mirror"   # запасной источник, ключ не нужен
+FAILS_TO_SWITCH = 3   # столько ошибок основного подряд — переходим на запасной
+RETRY_PRIMARY = 300   # раз в столько секунд пробуем вернуться на основной
+
+
+class _State:
+    active = ""            # источник, с которого сейчас берём данные
+    fails = 0              # ошибок основного подряд
+    next_primary_try = 0.0
+
+
+state = _State()
+
+
+def source_name(source: str | None = None) -> str:
+    """Человекочитаемое название источника (по умолчанию — того, что работает сейчас)."""
+    src = source or state.active or config.ALERTS_SOURCE
+    return SOURCE_NAMES.get(src, src)
+
+
+async def _fetch_from(session: aiohttp.ClientSession, source: str) -> dict[str, dict]:
+    if source == "alertsinua":
+        raw = await fetch_alertsinua(session)
+    else:
+        token = config.UKRAINEALARM_TOKEN if source == "ukrainealarm" else ""
+        raw = await ukrainealarm.fetch_active(session, token)
+    # единый ключ (название + тип) — чтобы при смене источника не было ложных тревог/відбоїв
+    return {alert_key(a): a for a in raw.values()}
 
 
 async def fetch_active(session: aiohttp.ClientSession) -> dict[str, dict]:
-    """Все активные тревоги по Украине из настроенного источника: {ключ: alert}."""
-    if config.ALERTS_SOURCE == "alertsinua":
-        return await fetch_alertsinua(session)
-    token = config.UKRAINEALARM_TOKEN if config.ALERTS_SOURCE == "ukrainealarm" else ""
-    return await ukrainealarm.fetch_active(session, token)
+    """Все активные тревоги по Украине: {ключ: alert}.
+
+    Берём из основного источника (config.ALERTS_SOURCE). После FAILS_TO_SWITCH
+    ошибок подряд переходим на зеркало siren.pp.ua и раз в RETRY_PRIMARY секунд
+    пробуем вернуться на основной.
+    """
+    primary = config.ALERTS_SOURCE
+    if not state.active:
+        state.active = primary
+    if primary == FALLBACK:
+        return await _fetch_from(session, primary)
+
+    on_fallback = state.active == FALLBACK
+    if not on_fallback or time.monotonic() >= state.next_primary_try:
+        try:
+            res = await _fetch_from(session, primary)
+        except Exception as e:  # noqa: BLE001
+            state.fails += 1
+            if not on_fallback and state.fails < FAILS_TO_SWITCH:
+                raise
+            if not on_fallback:
+                log.warning("источник %s недоступен (%s ошибок подряд, последняя: %r) — "
+                            "переключаюсь на %s", source_name(primary), state.fails, e,
+                            source_name(FALLBACK))
+                state.active = FALLBACK
+            state.next_primary_try = time.monotonic() + RETRY_PRIMARY
+        else:
+            if on_fallback:
+                log.warning("источник %s снова работает — возвращаюсь на него", source_name(primary))
+            state.active, state.fails = primary, 0
+            return res
+    return await _fetch_from(session, FALLBACK)
 
 
 async def fetch_alertsinua(session: aiohttp.ClientSession) -> dict[str, dict]:
@@ -42,7 +99,9 @@ async def fetch_alertsinua(session: aiohttp.ClientSession) -> dict[str, dict]:
 
 
 def alert_key(a: dict) -> str:
-    return f'{a.get("location_uid") or a.get("location_title")}|{a.get("alert_type")}'
+    """Ключ тревоги, одинаковый для всех источников: название локации + тип."""
+    title = _norm(a.get("location_title")).replace("’", "'").replace("ʼ", "'")
+    return f'{title}|{a.get("alert_type")}'
 
 
 def _norm(s: str | None) -> str:
