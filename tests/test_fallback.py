@@ -1,20 +1,22 @@
 import asyncio
+import importlib
 
 import pytest
 
 from bot import alerts, config
 
 A = {"location_title": "Ніжинський район", "alert_type": "air_raid"}
+CHAIN = ["alertsinua", "ukrainealarm", "mirror"]
 
 
 @pytest.fixture
 def env(monkeypatch):
-    monkeypatch.setattr(config, "ALERTS_SOURCE", "alertsinua")
+    monkeypatch.setattr(config, "ALERTS_CHAIN", CHAIN)
     monkeypatch.setattr(alerts, "state", alerts._State())
     clock = {"t": 1000.0}
     monkeypatch.setattr(alerts.time, "monotonic", lambda: clock["t"])
     calls = []
-    up = {"alertsinua": True, "mirror": True}
+    up = {s: True for s in CHAIN}
 
     async def fake(session, source):
         calls.append(source)
@@ -30,40 +32,73 @@ def run():
     return asyncio.run(alerts.fetch_active(None))
 
 
-def test_switch_to_mirror_and_back(env):
+def fail_n(n):
+    for _ in range(n):
+        with pytest.raises(RuntimeError):
+            run()
+
+
+def test_chain_down_and_back(env):
     clock, calls, up = env
     assert run() and calls == ["alertsinua"]
     up["alertsinua"] = False
-    for _ in range(alerts.FAILS_TO_SWITCH - 1):
-        with pytest.raises(RuntimeError):
-            run()
-    assert alerts.state.active == "alertsinua"
+    fail_n(alerts.FAILS_TO_SWITCH - 1)
     calls.clear()
-    assert run()                       # 3-я ошибка — сразу берём с зеркала
-    assert calls == ["alertsinua", "mirror"] and alerts.state.active == "mirror"
-    assert "siren" in alerts.source_name()
+    assert run()                       # 3-я ошибка — сразу берём со следующего
+    assert calls == ["alertsinua", "ukrainealarm"] and alerts.source_name() == "ukrainealarm.com"
+
+    up["ukrainealarm"] = False         # падает и второй — уходим на зеркало
+    fail_n(alerts.FAILS_TO_SWITCH - 1)
     calls.clear()
-    run()                              # пока не пришло время — основной не трогаем
+    assert run()
+    assert calls == ["ukrainealarm", "mirror"] and "siren" in alerts.source_name()
+
+    calls.clear()
+    run()                              # пока не пришло время — приоритетные не трогаем
     assert calls == ["mirror"]
+
+    up["ukrainealarm"] = True
     clock["t"] += alerts.RETRY_PRIMARY
     calls.clear()
-    run()                              # основной всё ещё лежит
-    assert calls == ["alertsinua", "mirror"] and alerts.state.active == "mirror"
+    run()                              # alerts.in.ua ещё лежит, ukrainealarm ожил
+    assert calls == ["alertsinua", "ukrainealarm"] and alerts.source_name() == "ukrainealarm.com"
+
     up["alertsinua"] = True
+    calls.clear()
+    run()                              # до следующей проверки остаёмся
+    assert calls == ["ukrainealarm"]
     clock["t"] += alerts.RETRY_PRIMARY
     calls.clear()
     run()
-    assert calls == ["alertsinua"] and alerts.state.active == "alertsinua"
-    assert alerts.source_name() == "alerts.in.ua"
+    assert calls == ["alertsinua"] and alerts.source_name() == "alerts.in.ua"
 
 
-def test_mirror_only_has_no_fallback(env, monkeypatch):
+def test_last_source_just_raises(env, monkeypatch):
     _, calls, up = env
-    monkeypatch.setattr(config, "ALERTS_SOURCE", "mirror")
+    monkeypatch.setattr(config, "ALERTS_CHAIN", ["mirror"])
     up["mirror"] = False
-    with pytest.raises(RuntimeError):
-        run()
-    assert calls == ["mirror"]
+    fail_n(alerts.FAILS_TO_SWITCH + 1)
+    assert set(calls) == {"mirror"}
+
+
+@pytest.mark.parametrize("env_vars,chain", [
+    ({}, ["mirror"]),
+    ({"ALERTS_TOKEN": "x"}, ["alertsinua", "mirror"]),
+    ({"UKRAINEALARM_TOKEN": "y"}, ["ukrainealarm", "mirror"]),
+    ({"ALERTS_TOKEN": "x", "UKRAINEALARM_TOKEN": "y"}, ["alertsinua", "ukrainealarm", "mirror"]),
+    ({"ALERTS_TOKEN": "x", "UKRAINEALARM_TOKEN": "y", "ALERTS_SOURCE": "ukrainealarm"},
+     ["ukrainealarm", "alertsinua", "mirror"]),
+])
+def test_chain_from_env(monkeypatch, env_vars, chain):
+    for k in ("ALERTS_TOKEN", "UKRAINEALARM_TOKEN", "ALERTS_SOURCE"):
+        monkeypatch.delenv(k, raising=False)
+    for k, v in env_vars.items():
+        monkeypatch.setenv(k, v)
+    try:
+        assert importlib.reload(config).ALERTS_CHAIN == chain
+    finally:
+        monkeypatch.undo()
+        importlib.reload(config)
 
 
 def test_key_same_across_sources():

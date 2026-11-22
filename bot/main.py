@@ -554,7 +554,8 @@ async def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     if not config.BOT_TOKEN:
         raise SystemExit("Задай BOT_TOKEN в .env")
-    log.info("Источник тревог: %s", alerts.source_name())
+    log.info("Источник тревог: %s (цепочка: %s)", alerts.source_name(),
+             " → ".join(alerts.source_name(s) for s in config.ALERTS_CHAIN))
     db = DB()
     bot = Bot(config.BOT_TOKEN)
     http = aiohttp.ClientSession()

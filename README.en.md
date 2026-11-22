@@ -48,10 +48,10 @@ nano .env   # paste the contents of .env.example and fill in the tokens
 ```
 
 - `BOT_TOKEN`: from [@BotFather](https://t.me/BotFather) (`/newbot`);
-- Alerts work **without a key**: by default the bot reads the public mirror of the ukrainealarm.com API (siren.pp.ua). For reliability you can add your own key (the bot picks the first one set):
+- Alerts work **without a key**: by default the bot reads the public mirror of the ukrainealarm.com API (siren.pp.ua). For reliability you can add your own keys. The bot walks the chain alerts.in.ua â ukrainealarm.com â mirror (sources without a key are skipped): after 3 errors in a row it moves to the next one and every 5 minutes tries to return to a higher-priority one.
   - `UKRAINEALARM_TOKEN`: official ukrainealarm.com API, request form at [api.ukrainealarm.com](https://api.ukrainealarm.com);
   - `ALERTS_TOKEN`: [devs.alerts.in.ua](https://devs.alerts.in.ua).
-  Force a source with `ALERTS_SOURCE=ukrainealarm|alertsinua|mirror`. After editing `.env` run `cd ~/alerts_bot && docker compose up -d --force-recreate`.
+  Put a source first in the chain with `ALERTS_SOURCE=ukrainealarm|alertsinua|mirror`. After editing `.env` run `cd ~/alerts_bot && docker compose up -d --force-recreate`.
 
 Everything else is done by GitHub Actions.
 

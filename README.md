@@ -46,10 +46,10 @@ nano .env   # вставить содержимое .env.example и заполн
 ```
 
 - `BOT_TOKEN` — у [@BotFather](https://t.me/BotFather) (`/newbot`);
-- Тревоги работают **без ключа**: по умолчанию бот берёт данные из публичного зеркала API «Повітряна тривога» (siren.pp.ua). Для надёжности можно добавить свой ключ (бот выберет первый доступный):
+- Тревоги работают **без ключа**: по умолчанию бот берёт данные из публичного зеркала API «Повітряна тривога» (siren.pp.ua). Для надёжности можно добавить свои ключи. Бот идёт по цепочке alerts.in.ua → ukrainealarm.com → зеркало (источники без ключа пропускаются): после 3 ошибок подряд переходит на следующий, раз в 5 минут пробует вернуться на более приоритетный.
   - `UKRAINEALARM_TOKEN` — официальный API «Повітряна тривога», форма запроса ключа на [api.ukrainealarm.com](https://api.ukrainealarm.com);
   - `ALERTS_TOKEN` — [devs.alerts.in.ua](https://devs.alerts.in.ua).
-  Принудительно выбрать источник: `ALERTS_SOURCE=ukrainealarm|alertsinua|mirror`. После изменения `.env`: `cd ~/alerts_bot && docker compose up -d --force-recreate`.
+  Поставить источник первым в цепочке: `ALERTS_SOURCE=ukrainealarm|alertsinua|mirror`. После изменения `.env`: `cd ~/alerts_bot && docker compose up -d --force-recreate`.
 
 Дальше всё делает GitHub Actions.
 
