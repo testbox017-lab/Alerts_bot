@@ -19,6 +19,10 @@ DB_PATH = Path(os.environ.get("DB_PATH", "data/bot.db"))
 
 # alerts.in.ua просит не чаще ~8 запросов в минуту на токен
 ALERTS_POLL_SECONDS = int(os.environ.get("ALERTS_POLL_SECONDS", "30"))
+# Сравнение alerts.in.ua и ukrainealarm (только лог, рассылка не меняется), см. bot/compare.py.
+# 15 с: вместе с основным опросом раз в 30 с это 6 запросов в минуту к alerts.in.ua (лимит ~8).
+ALERTS_COMPARE = os.environ.get("ALERTS_COMPARE", "0") == "1"
+ALERTS_COMPARE_SECONDS = int(os.environ.get("ALERTS_COMPARE_SECONDS", "15"))
 POWER_POLL_SECONDS = int(os.environ.get("POWER_POLL_SECONDS", "600"))
 # Предупреждать подписчиков, если график не грузится дольше N минут
 # или источник не обновлялся дольше N часов (обычно он обновляется хотя бы раз в сутки)

@@ -12,7 +12,7 @@ from aiogram.types import (BotCommand, CallbackQuery, InlineKeyboardButton,
                            InlineKeyboardMarkup, KeyboardButton, Message,
                            ReplyKeyboardMarkup)
 
-from . import alerts, config, power
+from . import alerts, compare, config, power
 from .config import TZ
 from .db import DB, Sub
 from .regions import OBLASTS, POWER_SOURCES, sources_for_oblast
@@ -381,6 +381,13 @@ async def cmd_status(m: Message):
     await reply(m, f"{text}\n\nДжерело: {alerts.source_name()}")
 
 
+@dp.message(Command("compare"))
+async def cmd_compare(m: Message):
+    if not config.ALERTS_COMPARE:
+        return await reply(m, "Порівняння джерел вимкнено (ALERTS_COMPARE=1 у .env).")
+    await reply(m, compare.report_from_file())
+
+
 @dp.message(Command("raion"))
 async def cmd_raion(m: Message, command: CommandObject):
     sub = db.get(m.chat.id)
@@ -638,6 +645,8 @@ async def main():
     ])
     loops = [power_loop, reminder_loop, alerts_loop]
     tasks = [asyncio.create_task(f()) for f in loops]
+    if config.ALERTS_COMPARE:
+        tasks.append(asyncio.create_task(compare.compare_loop(http)))
     try:
         await dp.start_polling(bot)
     finally:
