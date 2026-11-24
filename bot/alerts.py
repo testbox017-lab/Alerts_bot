@@ -113,17 +113,26 @@ def parse_filters(raion: str | None) -> list[str]:
     return [f.strip().lower() for f in (raion or "").split(",") if f.strip()]
 
 
+def split_oblasts(oblast: str | None) -> list[str]:
+    """Области чата хранятся через запятую: «Чернігівська область,Київська область»."""
+    return [o.strip() for o in (oblast or "").split(",") if o.strip()]
+
+
 def matches(a: dict, oblast: str | None, raion: str | None) -> bool:
     """Тревога касается подписчика?
 
-    Без фильтра района — все тревоги области. С фильтром (через запятую,
+    oblast — одна или несколько областей через запятую.
+    Без фильтра района — все тревоги этих областей. С фильтром (через запятую,
     например «Ніжинський, Бахмацька») — тревоги на всю область плюс те,
     где фильтр встречается в названии локации или района.
     """
-    if not oblast:
+    obs = split_oblasts(oblast)
+    if len(obs) > 1:
+        return any(matches(a, o, raion) for o in obs)
+    if not obs:
         return False
     title = a.get("location_title", "")
-    ob = _norm(oblast)
+    ob = _norm(obs[0])
     if _norm(a.get("location_oblast")) != ob and _norm(title) != ob:
         return False
     filters = parse_filters(raion)
@@ -133,10 +142,19 @@ def matches(a: dict, oblast: str | None, raion: str | None) -> bool:
     return any(f in hay for f in filters)
 
 
-def fmt_alert(a: dict) -> str:
+def place(a: dict, with_oblast: bool = False) -> str:
+    """Название локации; при нескольких областях у чата — с областью в скобках."""
+    title = a.get("location_title") or ""
+    ob = a.get("location_oblast") or ""
+    if with_oblast and ob and _norm(ob) != _norm(title):
+        return f'{title} ({ob.replace(" область", " обл.")})'
+    return title
+
+
+def fmt_alert(a: dict, with_oblast: bool = False) -> str:
     kind = ALERT_TYPES.get(a.get("alert_type"), a.get("alert_type") or "Тривога")
-    return f'{kind}: {a.get("location_title")}'
+    return f'{kind}: {place(a, with_oblast)}'
 
 
-def fmt_clear(a: dict) -> str:
-    return f'✅ Відбій: {a.get("location_title")}'
+def fmt_clear(a: dict, with_oblast: bool = False) -> str:
+    return f'✅ Відбій: {place(a, with_oblast)}'

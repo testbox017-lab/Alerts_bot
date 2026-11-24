@@ -1,4 +1,4 @@
-from bot.alerts import matches
+from bot.alerts import fmt_alert, fmt_clear, matches
 
 OBL = {"location_title": "Чернігівська область", "location_type": "oblast",
        "location_oblast": "Чернігівська область", "alert_type": "air_raid"}
@@ -29,3 +29,27 @@ def test_raion_filter():
 
 def test_kyiv_city():
     assert matches(KYIV, "м. Київ", None)
+
+
+def test_matches_several_oblasts():
+    obs = "Чернігівська область,м. Київ"
+    assert matches(KYIV, obs, None) and matches(RAION, obs, None)
+    assert not matches(KYIV, "Чернігівська область", None)
+    # фильтр районов применяется к каждой области, тревога на всю область проходит всегда
+    assert matches(KYIV, obs, "Ніжинський") and matches(RAION, obs, "Ніжинський")
+    assert not matches(OTHER, obs, "Ніжинський")
+
+
+def test_fmt_with_oblast():
+    assert "(Чернігівська обл.)" in fmt_alert(RAION, True)
+    assert "(" not in fmt_alert(RAION)
+    assert fmt_clear(KYIV, True) == f'✅ Відбій: {KYIV["location_title"]}'
+
+
+def test_sub_oblasts():
+    from bot.db import DB
+    d = DB(":memory:")
+    d.ensure(1, "t")
+    assert d.get(1).oblasts == []
+    d.update(1, oblast="Чернігівська область,Київська область")
+    assert d.get(1).oblasts == ["Чернігівська область", "Київська область"]

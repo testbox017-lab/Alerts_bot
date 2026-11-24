@@ -32,9 +32,9 @@ power_problem: dict[str, str | None] = {}
 POWER_SITES = {"chernihiv": "https://chernihivoblenergo.com.ua/blackouts"}
 
 HELP = (
-    "Я надсилаю повітряні тривоги по твоїй області (або району) і нагадую про "
+    "Я надсилаю повітряні тривоги по твоїх областях (до 5) або районах і нагадую про "
     "відключення світла за графіком твоєї черги.\n\n"
-    "/start — налаштувати область і чергу\n"
+    "/start — налаштувати області і чергу\n"
     "/settings — поточні налаштування\n"
     "/status — активні тривоги зараз\n"
     "/raion Ніжинський, Бахмацька — тривоги лише області + цих районів/громад "
@@ -119,13 +119,22 @@ def chunk(items: list, n: int) -> list[list]:
     return [items[i:i + n] for i in range(0, len(items), n)]
 
 
-def oblast_kb() -> InlineKeyboardMarkup:
-    btns = [(o.replace(" область", ""), f"ob:{i}") for i, o in enumerate(OBLASTS)]
-    return kb(chunk(btns, 2))
+MAX_OBLASTS = 5
+OBLAST_PROMPT = (f"Обери області для тривог (можна до {MAX_OBLASTS}, напр. де живуть рідні) "
+                 "і натисни «Готово»:")
 
 
-def power_kb(oblast: str | None, show_all: bool = False) -> InlineKeyboardMarkup:
-    keys = list(POWER_SOURCES) if show_all else sources_for_oblast(oblast or "")
+def oblast_kb(selected: list[str]) -> InlineKeyboardMarkup:
+    btns = [(("✅ " if o in selected else "") + o.replace(" область", ""), f"ob:{i}")
+            for i, o in enumerate(OBLASTS)]
+    rows = chunk(btns, 2)
+    rows.append([("Готово ✔️", "obd")])
+    return kb(rows)
+
+
+def power_kb(oblasts: list[str], show_all: bool = False) -> InlineKeyboardMarkup:
+    keys = list(POWER_SOURCES) if show_all else \
+        [k for o in oblasts for k in sources_for_oblast(o)]
     rows = chunk([(POWER_SOURCES[k][0], f"pw:{k}") for k in keys], 2)
     if not show_all:
         rows.append([("Інший постачальник…", "pw:*")])
@@ -149,7 +158,8 @@ def queue_label(sub: Sub) -> str:
 
 
 def describe(sub: Sub) -> str:
-    lines = [f"📍 Область: {sub.oblast or 'не вибрано'}"]
+    obs = sub.oblasts
+    lines = [("📍 Область: " if len(obs) <= 1 else "📍 Області: ") + (", ".join(obs) or "не вибрано")]
     if sub.raion:
         lines.append(f"🔎 Фільтр районів: {sub.raion}")
     if sub.power:
@@ -300,12 +310,13 @@ async def alerts_loop():
                     log.info("alerts: +%s -%s", [a["location_title"] for a in new],
                              [a["location_title"] for a in gone])
                     for sub in db.all():
+                        many = len(sub.oblasts) > 1
                         for a in new:
                             if alerts.matches(a, sub.oblast, sub.raion):
-                                await send(sub.chat_id, alerts.fmt_alert(a))
+                                await send(sub.chat_id, alerts.fmt_alert(a, many))
                         for a in gone:
                             if alerts.matches(a, sub.oblast, sub.raion):
-                                await send(sub.chat_id, alerts.fmt_clear(a))
+                                await send(sub.chat_id, alerts.fmt_clear(a, many))
             known = current
         except Exception as e:  # noqa: BLE001
             log.warning("alerts error: %s", e)
@@ -324,9 +335,9 @@ async def guard(m: Message) -> bool:
 async def cmd_start(m: Message):
     if not await guard(m):
         return
-    db.ensure(m.chat.id, chat_title(m))
     await reply(m, "Привіт! Кнопки меню — внизу екрана 👇", reply_markup=MENU)
-    await reply(m, "Обери область для тривог:", reply_markup=oblast_kb())
+    sub = db.ensure(m.chat.id, chat_title(m))
+    await reply(m, OBLAST_PROMPT, reply_markup=oblast_kb(sub.oblasts))
 
 
 @dp.message(Command("help"))
@@ -363,7 +374,9 @@ async def cmd_status(m: Message):
         cur = await fetch_alerts()
     except Exception as e:  # noqa: BLE001
         return await reply(m, f"Помилка API тривог: {e}")
-    mine = [alerts.fmt_alert(a) for a in cur.values() if alerts.matches(a, sub.oblast, sub.raion)]
+    many = len(sub.oblasts) > 1
+    mine = [alerts.fmt_alert(a, many) for a in cur.values()
+            if alerts.matches(a, sub.oblast, sub.raion)]
     text = "\n".join(sorted(mine)) if mine else "🟢 Тривог немає"
     await reply(m, f"{text}\n\nДжерело: {alerts.source_name()}")
 
@@ -448,7 +461,7 @@ async def cb_set(c: CallbackQuery):
         return
     sub = db.get(c.message.chat.id)
     if c.data == "set:ob" or not sub:
-        await c.message.edit_text("Обери область для тривог:", reply_markup=oblast_kb())
+        await c.message.edit_text(OBLAST_PROMPT, reply_markup=oblast_kb(sub.oblasts if sub else []))
     elif c.data == "set:rm":
         btns = [("вимкнути" if n == 0 else f"{n} хв", f"rm:{n}") for n in REMIND_CHOICES]
         await c.message.edit_text(f"Зараз: за {sub.remind} хв. За скільки попереджати "
@@ -457,10 +470,11 @@ async def cb_set(c: CallbackQuery):
         await c.message.edit_text(
             f"🔎 Фільтр: {sub.raion or 'вся область'}\n\n"
             "Щоб отримувати тривоги лише на всю область + свої райони/громади, надішли:\n"
+            "(при кількох областях фільтр діє на всі — перелічи райони кожної)\n"
             "/raion Ніжинський, Бахмацька",
             reply_markup=kb([[("Вся область", "rn:clear")]]))
     else:
-        await c.message.edit_text("Чий графік відключень світла?", reply_markup=power_kb(sub.oblast))
+        await c.message.edit_text("Чий графік відключень світла?", reply_markup=power_kb(sub.oblasts))
     await c.answer()
 
 
@@ -503,10 +517,27 @@ async def cb_oblast(c: CallbackQuery):
         return
     oblast = OBLASTS[int(c.data[3:])]
     chat = c.message.chat
-    db.ensure(chat.id, chat.title or chat.full_name)
-    db.update(chat.id, oblast=oblast, raion=None)
-    await c.message.edit_text(f"📍 {oblast}\n\nЧий графік відключень світла?",
-                              reply_markup=power_kb(oblast))
+    sel = db.ensure(chat.id, chat.title or chat.full_name).oblasts
+    if oblast in sel:
+        sel.remove(oblast)
+    elif len(sel) >= MAX_OBLASTS:
+        return await c.answer(f"Не більше {MAX_OBLASTS} областей", show_alert=True)
+    else:
+        sel.append(oblast)
+    db.update(chat.id, oblast=",".join(sel) or None, **({} if sel else {"raion": None}))
+    await c.message.edit_reply_markup(reply_markup=oblast_kb(sel))
+    await c.answer(("✅ " if oblast in sel else "Прибрано ") + oblast)
+
+
+@dp.callback_query(F.data == "obd")
+async def cb_oblast_done(c: CallbackQuery):
+    if not await cb_guard(c):
+        return
+    sub = db.get(c.message.chat.id)
+    if not sub or not sub.oblasts:
+        return await c.answer("Познач хоча б одну область", show_alert=True)
+    await c.message.edit_text(f"📍 {', '.join(sub.oblasts)}\n\nЧий графік відключень світла?",
+                              reply_markup=power_kb(sub.oblasts))
     await c.answer()
 
 
@@ -518,7 +549,7 @@ async def cb_power(c: CallbackQuery):
     sub = db.get(chat_id) or db.ensure(chat_id, c.message.chat.title)
     key = c.data[3:]
     if key == "*":
-        await c.message.edit_text("Обери постачальника:", reply_markup=power_kb(sub.oblast, True))
+        await c.message.edit_text("Обери постачальника:", reply_markup=power_kb(sub.oblasts, True))
         return await c.answer()
     if key == "-":
         db.update(chat_id, power=None, queue=None)
