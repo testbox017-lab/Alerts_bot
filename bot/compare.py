@@ -83,6 +83,16 @@ def _write(events: list[dict]):
             f.write(json.dumps(e, ensure_ascii=False) + "\n")
 
 
+def retry_after(e: BaseException) -> float:
+    """Сколько секунд ждать после 429 (по заголовку Retry-After, иначе 60)."""
+    if not isinstance(e, aiohttp.ClientResponseError) or e.status != 429:
+        return 0.0
+    try:
+        return max(1.0, float((e.headers or {}).get("Retry-After", 60)))
+    except ValueError:
+        return 60.0
+
+
 async def _timed(session: aiohttp.ClientSession, src: str):
     res = await alerts._fetch_from(session, src)
     return res, time.time()
@@ -97,14 +107,21 @@ async def compare_loop(session: aiohttp.ClientSession):
     log.info("ALERTS_COMPARE: сравниваю источники раз в %s с, лог %s",
              config.ALERTS_COMPARE_SECONDS, log_path())
     cmp = Comparator()
+    pause_until = {s: 0.0 for s in SOURCES}   # не трогаем источник, пока не истёк Retry-After
     while True:
-        results = await asyncio.gather(*(_timed(session, s) for s in SOURCES),
+        now = time.time()
+        active = [s for s in SOURCES if now >= pause_until[s]]
+        results = await asyncio.gather(*(_timed(session, s) for s in active),
                                        return_exceptions=True)
         events = []
-        for src, r in zip(SOURCES, results):
+        for src, r in zip(active, results):
             if isinstance(r, BaseException):
                 # ошибка ≠ «все тревоги закончились»: просто пропускаем этот снимок
-                log.info("ALERTS_COMPARE: %s ошибка: %r", src, r)
+                wait = retry_after(r)
+                if wait:
+                    pause_until[src] = time.time() + wait
+                log.info("ALERTS_COMPARE: %s ошибка: %s%s", src, alerts.err_text(r),
+                         f", пауза {wait:.0f} с" if wait else "")
                 continue
             cur, t = r
             events += cmp.feed(src, "loc", set(cur), t)

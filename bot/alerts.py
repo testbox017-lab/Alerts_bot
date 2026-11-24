@@ -37,6 +37,14 @@ class _State:
 state = _State()
 
 
+def err_text(e: BaseException) -> str:
+    """Текст ошибки для лога без заголовков запроса: repr() ошибки aiohttp
+    содержит Authorization, то есть ключ API."""
+    if isinstance(e, aiohttp.ClientResponseError):
+        return f"HTTP {e.status} {e.message}"
+    return f"{type(e).__name__}: {str(e)[:200]}"
+
+
 def source_name(source: str | None = None) -> str:
     """Человекочитаемое название источника (по умолчанию — того, что работает сейчас)."""
     chain = config.ALERTS_CHAIN
@@ -83,8 +91,8 @@ async def fetch_active(session: aiohttp.ClientSession) -> dict[str, dict]:
             raise
         state.idx, state.fails = state.idx + 1, 0
         state.next_retry = time.monotonic() + RETRY_PRIMARY
-        log.warning("источник %s недоступен (%s ошибок подряд, последняя: %r) — переключаюсь на %s",
-                    source_name(cur), FAILS_TO_SWITCH, e, source_name(chain[state.idx]))
+        log.warning("источник %s недоступен (%s ошибок подряд, последняя: %s) — переключаюсь на %s",
+                    source_name(cur), FAILS_TO_SWITCH, err_text(e), source_name(chain[state.idx]))
         return await _fetch_from(session, chain[state.idx])
     state.fails = 0
     return res
