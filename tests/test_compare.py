@@ -28,7 +28,8 @@ def test_only_one_source_expires():
     assert c.pending == {}
 
 
-def test_report():
+def test_report(monkeypatch):
+    monkeypatch.setattr(compare.config, "ALERTS_COMPARE_SECONDS", 15)
     lines = [json.dumps(e) for e in [
         {"lvl": "obl", "kind": "start", "key": "a", "first": "alertsinua", "delay": 0.2, "at": "2026-11-24T12:00:00"},
         {"lvl": "obl", "kind": "start", "key": "b", "first": "ukrainealarm", "delay": 30, "at": "2026-11-24T12:05:00"},

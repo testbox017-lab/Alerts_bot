@@ -1,7 +1,8 @@
 """Сравнение источников тревог: кто раньше сообщает о тревоге и відбої.
 
 Включается ALERTS_COMPARE=1. Только логирование: рассылка идёт как обычно,
-от одного источника по цепочке. Раз в ALERTS_COMPARE_SECONDS параллельно
+от одного источника по цепочке. Раз в ALERTS_COMPARE_SECONDS (60 с: ключ
+ukrainealarm пускает примерно 1 запрос в минуту) одновременно
 опрашиваем alerts.in.ua и ukrainealarm.com (оба нужны с ключами) и для каждого
 начала/конца тревоги пишем в data/compare.jsonl, какой источник был первым и
 насколько. Сравниваем на двух уровнях: точная локация (название + тип) и
@@ -107,25 +108,27 @@ async def compare_loop(session: aiohttp.ClientSession):
     log.info("ALERTS_COMPARE: сравниваю источники раз в %s с, лог %s",
              config.ALERTS_COMPARE_SECONDS, log_path())
     cmp = Comparator()
-    pause_until = {s: 0.0 for s in SOURCES}   # не трогаем источник, пока не истёк Retry-After
+    pause_until = 0.0   # после 429 ждём Retry-After, оба источника вместе
     while True:
-        now = time.time()
-        active = [s for s in SOURCES if now >= pause_until[s]]
-        results = await asyncio.gather(*(_timed(session, s) for s in active),
+        wait = pause_until - time.time()
+        if wait > 0:
+            await asyncio.sleep(wait)
+        results = await asyncio.gather(*(_timed(session, s) for s in SOURCES),
                                        return_exceptions=True)
         events = []
-        for src, r in zip(active, results):
-            if isinstance(r, BaseException):
-                # ошибка ≠ «все тревоги закончились»: просто пропускаем этот снимок
-                wait = retry_after(r)
-                if wait:
-                    pause_until[src] = time.time() + wait
-                log.info("ALERTS_COMPARE: %s ошибка: %s%s", src, alerts.err_text(r),
-                         f", пауза {wait:.0f} с" if wait else "")
-                continue
-            cur, t = r
-            events += cmp.feed(src, "loc", set(cur), t)
-            events += cmp.feed(src, "obl", oblast_keys(cur), t)
+        errors = [(src, r) for src, r in zip(SOURCES, results) if isinstance(r, BaseException)]
+        for src, r in errors:
+            ra = retry_after(r)
+            if ra:
+                pause_until = max(pause_until, time.time() + ra)
+            log.info("ALERTS_COMPARE: %s ошибка: %s%s", src, alerts.err_text(r),
+                     f", пауза {ra:.0f} с" if ra else "")
+        # Снимок учитываем, только если ответили оба: иначе источник, который
+        # опрашиваем чаще, всегда «выигрывал» бы. Ошибка ≠ «все тревоги закончились».
+        if not errors:
+            for src, (cur, t) in zip(SOURCES, results):
+                events += cmp.feed(src, "loc", set(cur), t)
+                events += cmp.feed(src, "obl", oblast_keys(cur), t)
         events += cmp.expire(time.time())
         try:
             _write(events)
