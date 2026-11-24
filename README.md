@@ -50,6 +50,7 @@ nano .env   # вставить содержимое .env.example и заполн
   - `UKRAINEALARM_TOKEN` — официальный API «Повітряна тривога», форма запроса ключа на [api.ukrainealarm.com](https://api.ukrainealarm.com);
   - `ALERTS_TOKEN` — [devs.alerts.in.ua](https://devs.alerts.in.ua).
   Поставить источник первым в цепочке: `ALERTS_SOURCE=ukrainealarm|alertsinua|mirror`. После изменения `.env`: `cd ~/alerts_bot && docker compose up -d --force-recreate`.
+  Какой источник быстрее: `ALERTS_COMPARE=1` (нужны оба ключа). Бот раз в 15 с опрашивает alerts.in.ua и ukrainealarm параллельно и пишет в `data/compare.jsonl`, кто раньше сообщил о тревоге и відбої и на сколько секунд. Рассылка при этом не меняется. Отчёт — команда `/compare`.
 
 Дальше всё делает GitHub Actions.
 
