@@ -43,11 +43,15 @@ CREATE TABLE IF NOT EXISTS sent (
 class Sub:
     chat_id: int
     title: str | None
-    oblast: str | None
+    oblast: str | None  # одна или несколько через запятую (до 5)
     raion: str | None
     power: str | None
     queue: str | None  # одна или несколько через запятую: "1.1,3.2"
     remind: int
+
+    @property
+    def oblasts(self) -> list[str]:
+        return [o for o in (self.oblast or "").split(",") if o]
 
     @property
     def queues(self) -> list[str]:
