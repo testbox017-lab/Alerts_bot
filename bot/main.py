@@ -319,7 +319,7 @@ async def alerts_loop():
                                 await send(sub.chat_id, alerts.fmt_clear(a, many))
             known = current
         except Exception as e:  # noqa: BLE001
-            log.warning("alerts error: %s", e)
+            log.warning("alerts error: %s", alerts.err_text(e))
         await asyncio.sleep(config.ALERTS_POLL_SECONDS)
 
 
