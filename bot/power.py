@@ -124,6 +124,28 @@ def parse_mykolaiv(queues: list, series: list, active: list) -> dict[str, dict[s
 _HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; alerts-bot)"}
 
 
+# ---------- Koly Ye (vkardin/koly): нормализованные графики, в т.ч. Сумы, Волынь, Кировоград ----------
+KOLY_URL = "https://vkardin.github.io/koly/v1/regions/{}.json"
+
+
+def parse_koly(d: dict) -> dict[str, dict[str, list[Interval]]]:
+    """{"days": [{"date", "groups": {q: [{"from", "to", "type": off|maybe}]}}]} -> {queue: {day: intervals}}."""
+    res: dict[str, dict[str, list[Interval]]] = {q: {} for q in STANDARD_QUEUES}
+    for day in d.get("days") or []:
+        for q, items in (day.get("groups") or {}).items():
+            iv = [[i["from"], i["to"]] for i in items or []
+                  if i.get("type") == "off" or (i.get("type") == "maybe" and config.POSSIBLE_AS_OFF)]
+            res.setdefault(str(q), {})[str(day["date"])] = sorted(iv)
+    return res
+
+
+def _koly_stamp(d: dict, key: str) -> datetime | None:
+    try:
+        return datetime.fromisoformat(d[key])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 async def _get_json(session: aiohttp.ClientSession, url: str):
     async with session.get(url, headers=_HEADERS, timeout=aiohttp.ClientTimeout(total=20)) as r:
         r.raise_for_status()
@@ -134,12 +156,17 @@ async def fetch_source(session: aiohttp.ClientSession, url: str):
     """-> (расписание, текст времени обновления, lastUpdated как datetime или None).
 
     url — либо ссылка на JSON в формате OE_OUTAGE_DATA/outage-data-ua,
-    либо "svitlo:<cpu>" (svitlo.live), либо "mykolaiv:" (API Миколаївобленерго).
-    У двух последних нет поля lastUpdated, поэтому время обновления — момент загрузки.
+    либо "svitlo:<cpu>" (svitlo.live), "koly:<id>" (Koly Ye), "mykolaiv:" (API Миколаївобленерго).
+    У svitlo и mykolaiv нет поля lastUpdated, поэтому время обновления — момент загрузки.
     """
     now_txt = f"{datetime.now(TZ):%d.%m.%Y %H:%M}"
     if url.startswith("svitlo:"):
         return parse_svitlo(await _get_json(session, SVITLO_URL), url.removeprefix("svitlo:")), now_txt, None
+    if url.startswith("koly:"):
+        d = await _get_json(session, KOLY_URL.format(url.removeprefix("koly:")))
+        upd = _koly_stamp(d, "updatedAt")
+        # fetchedAt — когда сборщик последний раз сходил к облэнерго: по нему видно, что он жив
+        return parse_koly(d), (f"{upd.astimezone(TZ):%d.%m.%Y %H:%M}" if upd else now_txt), _koly_stamp(d, "fetchedAt")
     if url == "mykolaiv:":
         queues = await _get_json(session, f"{MYKOLAIV_API}/outage-queue/by-type/3")
         series = await _get_json(session, f"{MYKOLAIV_API}/schedule/time-series")
