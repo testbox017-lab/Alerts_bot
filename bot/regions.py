@@ -37,8 +37,6 @@ POWER_SOURCES: dict[str, tuple[str, str, str]] = {
     "zaporizhzhia": ("Запоріжжяобленерго", _OE + "Zaporizhzhiaoblenergo.json", "Запорізька область"),
     "zhytomyr": ("Житомиробленерго", _OE + "Zhytomyroblenergo.json", "Житомирська область"),
     "vinnytsia": ("Вінницяобленерго", _VOE + "Vinnytsiaoblenerho.json", "Вінницька область"),
-    "sumy": ("Сумиобленерго", "svitlo:sumska-oblast", "Сумська область"),
-    "chernivtsi": ("Чернівціобленерго", "svitlo:chernivetska-oblast", "Чернівецька область"),
     "mykolaiv": ("Миколаївобленерго", "mykolaiv:", "Миколаївська область"),
 }
 

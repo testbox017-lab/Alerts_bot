@@ -120,8 +120,12 @@ def parse_mykolaiv(queues: list, series: list, active: list) -> dict[str, dict[s
     return res
 
 
+# off.energy.mk.ua и svitlo-proxy (Cloudflare) отвечают 403 на User-Agent aiohttp/urllib
+_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; alerts-bot)"}
+
+
 async def _get_json(session: aiohttp.ClientSession, url: str):
-    async with session.get(url, timeout=aiohttp.ClientTimeout(total=20)) as r:
+    async with session.get(url, headers=_HEADERS, timeout=aiohttp.ClientTimeout(total=20)) as r:
         r.raise_for_status()
         return json.loads(await r.text())
 
