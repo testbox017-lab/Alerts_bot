@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 
 import pytest
@@ -102,3 +103,39 @@ def test_fmt_health():
     assert "22.11 00:05" in t and site in t and t.startswith("⚠️")
     assert "понад 60 хв" in power.fmt_health("unreachable", "X", None, None)
     assert power.fmt_health(None, "X", None, None).startswith("✅")
+
+
+def test_parse_svitlo_region():
+    slots = {f"{i // 2:02d}:{30 * (i % 2):02d}": 1 for i in range(48)}
+    slots.update({"18:00": 2, "18:30": 2, "19:00": 2, "23:30": 2})
+    body = {"regions": [
+        {"cpu": "sumska-oblast", "schedule": {"3.2": {"2026-11-25": slots, "2026-11-26": {}}}},
+        {"cpu": "chernivetska-oblast", "schedule": {}},
+    ]}
+    res = power.parse_svitlo({"body": json.dumps(body)}, "sumska-oblast")
+    assert res["3.2"] == {"2026-11-25": [["18:00", "19:30"], ["23:30", "24:00"]]}
+    assert res["1.1"] == {} and len(res) == 12
+    assert power.parse_svitlo(body, "chernivetska-oblast") == {str(i): {} for i in range(1, 13)}
+    with pytest.raises(ValueError):
+        power.parse_svitlo(body, "volynska-oblast")
+
+
+def test_parse_mykolaiv():
+    queues = [{"id": 14, "name": "1.1"}, {"id": 15, "name": "1.2"}, {"id": 99, "name": "Місто"}]
+    series = [{"id": i + 1, "start": f"{i // 2:02d}:{30 * (i % 2):02d}:00"} for i in range(48)]
+    active = [{"from": "2026-11-24T22:00:00.000000Z", "series": [
+        {"time_series_id": 21, "outage_queue_id": 14, "type": "OFF"},   # 10:00
+        {"time_series_id": 22, "outage_queue_id": 14, "type": "OFF"},   # 10:30
+        {"time_series_id": 23, "outage_queue_id": 14, "type": "PROBABLY_OFF"},  # 11:00
+        {"time_series_id": 30, "outage_queue_id": 15, "type": "ENABLE"},
+    ]}]
+    res = power.parse_mykolaiv(queues, series, active)
+    assert res["1.1"]["2026-11-25"] == [["10:00", "11:30"]]
+    assert res["1.2"]["2026-11-25"] == []
+    assert "Місто" not in res
+
+
+def test_last_updated_iso_and_unix():
+    assert power.last_updated({"lastUpdated": "2026-11-25T10:00:00Z"}).hour == 10
+    assert power.last_updated({"lastUpdated": 1795625516}).tzinfo is not None
+    assert power.last_updated({}) is None

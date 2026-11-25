@@ -24,6 +24,11 @@ def slots_to_intervals(slots: dict) -> list[Interval]:
     halves: list[int] = []
     for h in range(1, 25):
         halves += smap.get(slots.get(str(h), "yes"), (0, 0))
+    return halves_to_intervals(halves)
+
+
+def halves_to_intervals(halves: list[int]) -> list[Interval]:
+    """48 получасов (1 = нет света) -> интервалы ["HH:MM", "HH:MM"]."""
 
     def hm(x: int) -> str:
         return f"{x // 2:02d}:{30 * (x % 2):02d}"
@@ -53,11 +58,90 @@ def queue_sort_key(q: str) -> list[int]:
     return [int(x) for x in q.split(".") if x.isdigit()]
 
 
-async def fetch_source(session: aiohttp.ClientSession, url: str):
-    """-> (расписание, текст времени обновления, lastUpdated как datetime или None)."""
+# ---------- svitlo.live: одна JSON-выдача на всю страну, получасовые слоты ----------
+SVITLO_URL = "https://dtek-api.svitlo-proxy.workers.dev/"
+STANDARD_QUEUES = [f"{a}.{b}" for a in range(1, 7) for b in (1, 2)]
+# Чернівціобленерго нумерует группы 1–12, остальные — 1.1–6.2
+SVITLO_QUEUES = {"chernivetska-oblast": [str(i) for i in range(1, 13)]}
+
+
+def parse_svitlo(payload: dict, cpu: str) -> dict[str, dict[str, list[Interval]]]:
+    """Ответ svitlo.live -> {queue: {iso_day: intervals}} для региона cpu (напр. sumska-oblast).
+
+    Слоты "HH:MM": 1 = свет есть, 2 = отключение, прочее — неизвестно (считаем, что свет есть).
+    """
+    body = payload.get("body") if isinstance(payload, dict) else None
+    if isinstance(body, str):
+        payload = json.loads(body)
+    region = next((r for r in payload.get("regions", []) if r.get("cpu") == cpu), None)
+    if region is None:
+        raise ValueError(f"svitlo.live: region {cpu} is missing")
+    # очереди есть всегда, даже если графика сейчас нет, — чтобы их можно было выбрать
+    res: dict[str, dict[str, list[Interval]]] = {q: {} for q in SVITLO_QUEUES.get(cpu, STANDARD_QUEUES)}
+    for q, days in (region.get("schedule") or {}).items():
+        for day, slots in (days or {}).items():
+            if not isinstance(slots, dict) or not slots:
+                continue
+            halves = [1 if slots.get(f"{i // 2:02d}:{30 * (i % 2):02d}") == 2 else 0 for i in range(48)]
+            res.setdefault(str(q), {})[str(day)] = halves_to_intervals(halves)
+    return res
+
+
+# ---------- Миколаївобленерго: официальный API off.energy.mk.ua ----------
+MYKOLAIV_API = "https://off.energy.mk.ua/api"
+_MK_TYPES = {"OFF": 1, "SURE_OFF": 1, "PROBABLY_OFF": None, "ENABLE": 0}
+
+
+def parse_mykolaiv(queues: list, series: list, active: list) -> dict[str, dict[str, list[Interval]]]:
+    """Очереди (type 3), получасовые слоты и активные графики -> {queue: {iso_day: intervals}}."""
+    group_by_id = {q["id"]: q["name"] for q in queues if re.fullmatch(r"\d+\.\d+", str(q.get("name")))}
+    slot_by_id = {}
+    for it in series:
+        mt = re.match(r"(\d{2}):(\d{2})", str(it.get("start")))
+        if mt:
+            slot_by_id[it["id"]] = (int(mt[1]) * 60 + int(mt[2])) // 30
+    if not group_by_id or not slot_by_id:
+        raise ValueError("mykolaiv: no queues or time slots")
+    possible = int(config.POSSIBLE_AS_OFF)
+    res: dict[str, dict[str, list[Interval]]] = {g: {} for g in group_by_id.values()}
+    for sch in active:
+        start = datetime.fromisoformat(str(sch.get("from")).replace("Z", "+00:00"))
+        day = start.astimezone(TZ).date().isoformat()
+        halves = {g: [0] * 48 for g in group_by_id.values()}
+        for cell in sch.get("series", []):
+            g = group_by_id.get(cell.get("outage_queue_id"))
+            i = slot_by_id.get(cell.get("time_series_id"))
+            t = cell.get("type")
+            if g is None or i is None or t not in _MK_TYPES or not 0 <= i < 48:
+                continue
+            halves[g][i] = possible if _MK_TYPES[t] is None else _MK_TYPES[t]
+        for g, h in halves.items():
+            res.setdefault(g, {})[day] = halves_to_intervals(h)
+    return res
+
+
+async def _get_json(session: aiohttp.ClientSession, url: str):
     async with session.get(url, timeout=aiohttp.ClientTimeout(total=20)) as r:
         r.raise_for_status()
-        d = json.loads(await r.text())
+        return json.loads(await r.text())
+
+
+async def fetch_source(session: aiohttp.ClientSession, url: str):
+    """-> (расписание, текст времени обновления, lastUpdated как datetime или None).
+
+    url — либо ссылка на JSON в формате OE_OUTAGE_DATA/outage-data-ua,
+    либо "svitlo:<cpu>" (svitlo.live), либо "mykolaiv:" (API Миколаївобленерго).
+    У двух последних нет поля lastUpdated, поэтому время обновления — момент загрузки.
+    """
+    now_txt = f"{datetime.now(TZ):%d.%m.%Y %H:%M}"
+    if url.startswith("svitlo:"):
+        return parse_svitlo(await _get_json(session, SVITLO_URL), url.removeprefix("svitlo:")), now_txt, None
+    if url == "mykolaiv:":
+        queues = await _get_json(session, f"{MYKOLAIV_API}/outage-queue/by-type/3")
+        series = await _get_json(session, f"{MYKOLAIV_API}/schedule/time-series")
+        active = await _get_json(session, f"{MYKOLAIV_API}/v2/schedule/active")
+        return parse_mykolaiv(queues, series, active), now_txt, None
+    d = await _get_json(session, url)
     data, upd = parse_source(d)
     return data, upd, last_updated(d)
 
@@ -65,8 +149,11 @@ async def fetch_source(session: aiohttp.ClientSession, url: str):
 def last_updated(d: dict) -> datetime | None:
     """Поле lastUpdated источника (ISO, UTC). Источники обновляют его минимум раз в сутки
     (около 00:05 переходят на новый день), поэтому по нему видно, что сборщик жив."""
+    v = d.get("lastUpdated") if isinstance(d, dict) else None
+    if isinstance(v, (int, float)):  # у gpv-voe-vinnytsia это unix-время
+        return datetime.fromtimestamp(v, TZ)
     try:
-        return datetime.fromisoformat(d["lastUpdated"].replace("Z", "+00:00"))
+        return datetime.fromisoformat(v.replace("Z", "+00:00"))
     except (KeyError, TypeError, ValueError, AttributeError):
         return None
 

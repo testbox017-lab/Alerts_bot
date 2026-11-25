@@ -15,8 +15,10 @@ OBLASTS = [
 
 _OE = "https://raw.githubusercontent.com/yaroslav2901/OE_OUTAGE_DATA/main/data/"
 _DTEK = "https://raw.githubusercontent.com/Baskerville42/outage-data-ua/main/data/"
+_VOE = "https://raw.githubusercontent.com/vn-progr/gpv-voe-vinnytsia/main/data/"
 
 # ключ -> (название для людей, URL JSON с графиком, область для подсказки)
+# Вместо URL может быть "svitlo:<регион>" (svitlo.live) или "mykolaiv:" (API Миколаївобленерго).
 POWER_SOURCES: dict[str, tuple[str, str, str]] = {
     "kyiv": ("Київ (ДТЕК)", _DTEK + "kyiv.json", "м. Київ"),
     "kyiv-region": ("Київщина (ДТЕК)", _DTEK + "kyiv-region.json", "Київська область"),
@@ -34,6 +36,10 @@ POWER_SOURCES: dict[str, tuple[str, str, str]] = {
     "zakarpattia": ("Закарпаттяобленерго", _OE + "Zakarpattiaoblenerho.json", "Закарпатська область"),
     "zaporizhzhia": ("Запоріжжяобленерго", _OE + "Zaporizhzhiaoblenergo.json", "Запорізька область"),
     "zhytomyr": ("Житомиробленерго", _OE + "Zhytomyroblenergo.json", "Житомирська область"),
+    "vinnytsia": ("Вінницяобленерго", _VOE + "Vinnytsiaoblenerho.json", "Вінницька область"),
+    "sumy": ("Сумиобленерго", "svitlo:sumska-oblast", "Сумська область"),
+    "chernivtsi": ("Чернівціобленерго", "svitlo:chernivetska-oblast", "Чернівецька область"),
+    "mykolaiv": ("Миколаївобленерго", "mykolaiv:", "Миколаївська область"),
 }
 
 
