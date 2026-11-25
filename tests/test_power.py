@@ -139,3 +139,16 @@ def test_last_updated_iso_and_unix():
     assert power.last_updated({"lastUpdated": "2026-11-25T10:00:00Z"}).hour == 10
     assert power.last_updated({"lastUpdated": 1795625516}).tzinfo is not None
     assert power.last_updated({}) is None
+
+
+def test_parse_koly():
+    d = {"days": [{"date": "2026-11-25", "groups": {
+        "1.1": [{"from": "12:00", "to": "16:00", "type": "off"}, {"from": "08:00", "to": "10:00", "type": "off"}],
+        "1.2": [{"from": "22:00", "to": "24:00", "type": "maybe"}],
+        "2.1": [],
+    }}]}
+    res = power.parse_koly(d)
+    assert res["1.1"]["2026-11-25"] == [["08:00", "10:00"], ["12:00", "16:00"]]
+    assert res["1.2"]["2026-11-25"] == [["22:00", "24:00"]]  # POSSIBLE_AS_OFF=1 по умолчанию
+    assert res["2.1"]["2026-11-25"] == []
+    assert res["6.2"] == {} and len(res) == 12
