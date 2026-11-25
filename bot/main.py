@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import time
 from datetime import datetime, timedelta
 
 import aiohttp
@@ -294,15 +295,29 @@ async def reminder_loop():
 
 
 # ---------- тревоги ----------
+# последний снимок тревог из alerts_loop: /status берёт его, а не делает
+# лишний запрос (у ключа ukrainealarm лимит ~1 запрос в минуту)
+last_alerts: dict[str, dict] | None = None
+last_alerts_at = 0.0
+
+
 async def fetch_alerts() -> dict[str, dict]:
     return await alerts.fetch_active(http)
 
 
+async def current_alerts() -> dict[str, dict]:
+    if last_alerts is not None and time.monotonic() - last_alerts_at < 3 * config.ALERTS_POLL_SECONDS:
+        return last_alerts
+    return await fetch_alerts()
+
+
 async def alerts_loop():
+    global last_alerts, last_alerts_at
     known: dict[str, dict] | None = None
     while True:
         try:
             current = await fetch_alerts()
+            last_alerts, last_alerts_at = current, time.monotonic()
             if known is not None:
                 new = [current[k] for k in current.keys() - known.keys()]
                 gone = [known[k] for k in known.keys() - current.keys()]
@@ -371,9 +386,9 @@ async def cmd_status(m: Message):
     if not sub or not sub.oblast:
         return await reply(m, "Спочатку обери область: /start")
     try:
-        cur = await fetch_alerts()
+        cur = await current_alerts()
     except Exception as e:  # noqa: BLE001
-        return await reply(m, f"Помилка API тривог: {e}")
+        return await reply(m, f"Помилка API тривог: {alerts.err_text(e)}")
     many = len(sub.oblasts) > 1
     mine = [alerts.fmt_alert(a, many) for a in cur.values()
             if alerts.matches(a, sub.oblast, sub.raion)]
