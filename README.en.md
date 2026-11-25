@@ -5,7 +5,7 @@
 A Telegram bot for Ukraine that tells you, your family or your group chat about:
 
 - 🚨 **air-raid alerts** in a chosen oblast (optionally narrowed down to specific raions/hromadas), from the "Povitriana tryvoha" app API ([ukrainealarm.com](https://api.ukrainealarm.com)) or [alerts.in.ua](https://alerts.in.ua);
-- 💡 **scheduled power outages** for your queue, with a reminder N minutes before the power goes off and comes back. Schedules come from the open data collectors [OE_OUTAGE_DATA](https://github.com/yaroslav2901/OE_OUTAGE_DATA) and [outage-data-ua](https://github.com/Baskerville42/outage-data-ua); for Vinnytsia oblast from [gpv-voe-vinnytsia](https://github.com/vn-progr/gpv-voe-vinnytsia), for Sumy and Chernivtsi from [svitlo.live](https://svitlo.live), for Mykolaiv from the official API [off.energy.mk.ua](https://off.energy.mk.ua). Volyn, Kirovohrad and Kherson oblasts have no open source yet.
+- 💡 **scheduled power outages** for your queue, with a reminder N minutes before the power goes off and comes back. Schedules come from the open data collectors [OE_OUTAGE_DATA](https://github.com/yaroslav2901/OE_OUTAGE_DATA) and [outage-data-ua](https://github.com/Baskerville42/outage-data-ua); for Vinnytsia oblast from [gpv-voe-vinnytsia](https://github.com/vn-progr/gpv-voe-vinnytsia), for Mykolaiv from the official API [off.energy.mk.ua](https://off.energy.mk.ua). Volyn, Kirovohrad, Sumy, Kherson and Chernivtsi oblasts have no open source yet.
 
 Every chat (private or group) picks its own oblast and queue with buttons after `/start`, so people in different regions can use the same bot.
 
