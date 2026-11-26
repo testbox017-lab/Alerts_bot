@@ -52,6 +52,7 @@ nano .env   # paste the contents of .env.example and fill in the tokens
   - `UKRAINEALARM_TOKEN`: official ukrainealarm.com API, request form at [api.ukrainealarm.com](https://api.ukrainealarm.com);
   - `ALERTS_TOKEN`: [devs.alerts.in.ua](https://devs.alerts.in.ua).
   Put a source first in the chain with `ALERTS_SOURCE=ukrainealarm|alertsinua|mirror`. After editing `.env` run `cd ~/alerts_bot && docker compose up -d --force-recreate`.
+  Or right in the bot, no restart: ⚙️ Налаштування → 📡 Джерело тривог (only the bot owner sees the button). The choice applies to all chats, is stored in `data/bot.db` and overrides `ALERTS_SOURCE`. Owner = Telegram ids in `ADMIN_IDS=123,456`; if unset, the first user who sends `/source` to the bot in a private chat. While on ukrainealarm.com with a key the bot polls once a minute (`UKRAINEALARM_POLL_SECONDS=60`), other sources every `ALERTS_POLL_SECONDS`.
 
 Everything else is done by GitHub Actions.
 

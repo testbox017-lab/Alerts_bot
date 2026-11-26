@@ -37,6 +37,24 @@ class _State:
 state = _State()
 
 
+def current_source() -> str:
+    chain = config.ALERTS_CHAIN
+    return chain[min(state.idx, len(chain) - 1)]
+
+
+def set_first(source: str):
+    """Поставить источник первым в цепочке (кнопка в боте) и сразу перейти на него."""
+    config.ALERTS_CHAIN = config.make_chain(source)
+    state.idx, state.fails, state.next_retry = 0, 0, 0.0
+
+
+def poll_seconds() -> int:
+    """Пауза между опросами: с ключом ukrainealarm не чаще раза в минуту (иначе 429)."""
+    if current_source() == "ukrainealarm":
+        return max(config.ALERTS_POLL_SECONDS, config.UKRAINEALARM_POLL_SECONDS)
+    return config.ALERTS_POLL_SECONDS
+
+
 def err_text(e: BaseException) -> str:
     """Текст ошибки для лога без заголовков запроса: repr() ошибки aiohttp
     содержит Authorization, то есть ключ API."""
@@ -47,8 +65,7 @@ def err_text(e: BaseException) -> str:
 
 def source_name(source: str | None = None) -> str:
     """Человекочитаемое название источника (по умолчанию — того, что работает сейчас)."""
-    chain = config.ALERTS_CHAIN
-    src = source or chain[min(state.idx, len(chain) - 1)]
+    src = source or current_source()
     return SOURCE_NAMES.get(src, src)
 
 

@@ -30,6 +30,10 @@ CREATE TABLE IF NOT EXISTS sched (
     intervals TEXT NOT NULL,
     PRIMARY KEY (power, queue, day)
 );
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
 CREATE TABLE IF NOT EXISTS sent (
     chat_id INTEGER NOT NULL,
     key     TEXT NOT NULL,
@@ -95,6 +99,15 @@ class DB:
     def used_sources(self) -> set[str]:
         return {r[0] for r in self.c.execute(
             "SELECT DISTINCT power FROM subs WHERE power IS NOT NULL")}
+
+    # ----- общие настройки бота (первый источник тревог, владелец) -----
+    def setting(self, key: str) -> str | None:
+        r = self.c.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        return r[0] if r else None
+
+    def set_setting(self, key: str, value: str):
+        self.c.execute("INSERT OR REPLACE INTO settings VALUES(?,?)", (key, value))
+        self.c.commit()
 
     # ----- кэш графиков из источников -----
     def sched_get(self, power: str, queue: str) -> dict[str, list]:
