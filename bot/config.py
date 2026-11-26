@@ -44,3 +44,9 @@ POWER_STALE_HOURS = int(os.environ.get("POWER_STALE_HOURS", "26"))
 DEFAULT_REMIND = int(os.environ.get("DEFAULT_REMIND", "30"))
 # "можливе відключення" (mfirst/msecond) считать отключением
 POSSIBLE_AS_OFF = os.environ.get("POSSIBLE_AS_OFF", "1") == "1"
+
+# Рассылка (bot/sender.py): сообщений в секунду на весь бот (лимит Telegram ~30),
+# сколько отправок одновременно, сколько попыток при ответе 429 Too Many Requests
+SEND_RATE = float(os.environ.get("SEND_RATE", "25"))
+SEND_CONCURRENCY = int(os.environ.get("SEND_CONCURRENCY", "20"))
+SEND_ATTEMPTS = int(os.environ.get("SEND_ATTEMPTS", "5"))

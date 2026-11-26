@@ -13,7 +13,7 @@ from aiogram.types import (BotCommand, CallbackQuery, InlineKeyboardButton,
                            InlineKeyboardMarkup, KeyboardButton, Message,
                            ReplyKeyboardMarkup)
 
-from . import alerts, compare, config, power
+from . import alerts, compare, config, power, sender
 from .config import TZ
 from .db import DB, Sub
 from .regions import OBLASTS, POWER_SOURCES, sources_for_oblast
@@ -77,15 +77,23 @@ async def reply(m: Message, text: str, reply_markup=None, **kw):
     return await m.answer(text, reply_markup=reply_markup or MENU, **kw)
 
 
+limiter = sender.RateLimiter(config.SEND_RATE)
+# фоновые рассылки тревог (держим ссылки, чтобы задачи не собрал GC)
+_bg_tasks: set[asyncio.Task] = set()
+_alerts_lock = asyncio.Lock()   # тревоги уходят пачками строго по очереди
+
+
 async def send(chat_id: int, text: str):
-    for _ in range(2):
+    for _ in range(config.SEND_ATTEMPTS):
+        await limiter.wait()
         try:
             await bot.send_message(chat_id, text, disable_web_page_preview=True,
                                    reply_markup=MENU)
             log.info("sent to %s: %s", chat_id, text[:80])
+            limiter.success()
             return
         except TelegramRetryAfter as e:
-            await asyncio.sleep(e.retry_after + 1)
+            limiter.pause(e.retry_after + 1)
         except TelegramForbiddenError:
             log.info("chat %s blocked/kicked the bot, removing", chat_id)
             db.delete(chat_id)
@@ -93,6 +101,17 @@ async def send(chat_id: int, text: str):
         except Exception as e:  # noqa: BLE001
             log.warning("send to %s failed: %s", chat_id, e)
             return
+    log.warning("send to %s dropped after %s attempts (429): %s",
+                chat_id, config.SEND_ATTEMPTS, text[:80])
+
+
+async def send_many(items: list[tuple[int, str]]):
+    await sender.broadcast(items, send, config.SEND_CONCURRENCY)
+
+
+async def _send_alerts(items: list[tuple[int, str]]):
+    async with _alerts_lock:
+        await send_many(items)
 
 
 BTN_SVET = "💡 Графік світла"
@@ -264,9 +283,7 @@ async def check_power_health(src: str):
     log.warning("power source %s health: %s -> %s", src, was, problem)
     text = power.fmt_health(problem, POWER_SOURCES[src][0], power_updated_at.get(src),
                             POWER_SITES.get(src))
-    for sub in db.all():
-        if sub.power == src:
-            await send(sub.chat_id, text)
+    await send_many([(sub.chat_id, text) for sub in db.all() if sub.power == src])
 
 
 async def power_loop():
@@ -283,6 +300,7 @@ async def power_loop():
             if not changed:
                 continue
             upd = source_cache[src][1]
+            items = []
             for sub in db.all():
                 mine = [q for q in sub.queues if q in changed] if sub.power == src else []
                 if not mine:
@@ -293,8 +311,9 @@ async def power_loop():
                     lines = [power.fmt_day(d, sched[d]) for d in sorted(changed[q])]
                     note = "\n(є ручна правка /svet — вона діє, поки не очистиш)" if \
                         any(d in manual for d in changed[q]) else ""
-                    await send(sub.chat_id, f"📋 Графік черги {q} оновлено ({upd}):\n"
-                               + "\n".join(lines) + note)
+                    items.append((sub.chat_id, f"📋 Графік черги {q} оновлено ({upd}):\n"
+                                  + "\n".join(lines) + note))
+            await send_many(items)
         await asyncio.sleep(config.POWER_POLL_SECONDS)
 
 
@@ -302,6 +321,7 @@ async def reminder_loop():
     while True:
         now = datetime.now(TZ)
         since = (now.date() - timedelta(days=1)).isoformat()
+        items = []
         for sub in db.all():
             if not sub.remind:
                 continue
@@ -317,8 +337,10 @@ async def reminder_loop():
                     tag = f" (черга {q})" if many else ""
                     text = (f"🔌 Через {left} хв ({hhmm}) вимкнуть світло{tag}. Заряди павербанк!"
                             if kind == "off" else f"💡 Через {left} хв ({hhmm}) мають дати світло{tag}")
-                    db.mark_sent(sub.chat_id, key, t.date().isoformat())
-                    await send(sub.chat_id, text)
+                    db.mark_sent(sub.chat_id, key, t.date().isoformat(), commit=False)
+                    items.append((sub.chat_id, text))
+        db.commit()
+        await send_many(items)
         await asyncio.sleep(30)
 
 
@@ -352,14 +374,20 @@ async def alerts_loop():
                 if new or gone:
                     log.info("alerts: +%s -%s", [a["location_title"] for a in new],
                              [a["location_title"] for a in gone])
+                    items = []
                     for sub in db.all():
                         many = len(sub.oblasts) > 1
                         for a in new:
                             if alerts.matches(a, sub.oblast, sub.raion):
-                                await send(sub.chat_id, alerts.fmt_alert(a, many))
+                                items.append((sub.chat_id, alerts.fmt_alert(a, many)))
                         for a in gone:
                             if alerts.matches(a, sub.oblast, sub.raion):
-                                await send(sub.chat_id, alerts.fmt_clear(a, many))
+                                items.append((sub.chat_id, alerts.fmt_clear(a, many)))
+                    # рассылка идёт в фоне, опрос тревог не ждёт её окончания;
+                    # пачки уходят по очереди, так что «відбій» не обгонит тревогу
+                    t = asyncio.create_task(_send_alerts(items))
+                    _bg_tasks.add(t)
+                    t.add_done_callback(_bg_tasks.discard)
             known = current
         except Exception as e:  # noqa: BLE001
             log.warning("alerts error: %s", alerts.err_text(e))
