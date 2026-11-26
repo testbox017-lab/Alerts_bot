@@ -163,9 +163,10 @@ class DB:
         return self.c.execute("SELECT 1 FROM sent WHERE chat_id=? AND key=?",
                               (chat_id, key)).fetchone() is not None
 
-    def mark_sent(self, chat_id: int, key: str, day: str):
+    def mark_sent(self, chat_id: int, key: str, day: str, commit: bool = True):
         self.c.execute("INSERT OR IGNORE INTO sent VALUES(?,?,?)", (chat_id, key, day))
-        self.c.commit()
+        if commit:
+            self.c.commit()
 
     def cleanup(self, before_day: str):
         self.c.execute("DELETE FROM sent WHERE day<?", (before_day,))
