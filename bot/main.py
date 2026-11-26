@@ -106,9 +106,37 @@ MENU = ReplyKeyboardMarkup(
 REMIND_CHOICES = [0, 10, 15, 30, 60]
 
 
-def settings_kb() -> InlineKeyboardMarkup:
-    return kb([[("📍 Область", "set:ob"), ("💡 Світло і черга", "set:pw")],
-               [("⏰ Нагадування", "set:rm"), ("🔎 Райони", "set:rn")]])
+def settings_kb(owner: bool = False) -> InlineKeyboardMarkup:
+    rows = [[("📍 Область", "set:ob"), ("💡 Світло і черга", "set:pw")],
+            [("⏰ Нагадування", "set:rm"), ("🔎 Райони", "set:rn")]]
+    if owner:   # источник общий для всех чатов — кнопка только владельцу бота
+        rows.append([("📡 Джерело тривог", "src:menu")])
+    return kb(rows)
+
+
+# ---------- первый источник тревог (общий для всех чатов, меняет только владелец) ----------
+def is_owner(user_id: int) -> bool:
+    if config.ADMIN_IDS:
+        return user_id in config.ADMIN_IDS
+    return db.setting("owner") == str(user_id)
+
+
+def source_text() -> str:
+    chain = " → ".join(alerts.source_name(s) for s in config.ALERTS_CHAIN)
+    text = (f"📡 Перше джерело тривог: {alerts.source_name(config.ALERTS_CHAIN[0])}\n"
+            f"Ланцюжок: {chain}\n"
+            f"Зараз працює: {alerts.source_name()}, опитування раз на {alerts.poll_seconds()} с")
+    if "ukrainealarm" in config.SOURCES:
+        text += "\n\nЗ ukrainealarm.com бот опитує раз на хвилину (ліміт ключа), з інших — частіше."
+    return text + "\n\nХто буде першим? Діє для всіх чатів бота."
+
+
+def source_kb() -> InlineKeyboardMarkup:
+    first = config.ALERTS_CHAIN[0]
+    names = {"alertsinua": "alerts.in.ua", "ukrainealarm": "ukrainealarm.com",
+             "mirror": "дзеркало siren.pp.ua"}
+    return kb([[(("✅ " if s == first else "") + names.get(s, s), f"src:{s}")]
+               for s in config.SOURCES])
 
 
 def kb(rows: list[list[tuple[str, str]]]) -> InlineKeyboardMarkup:
@@ -306,7 +334,7 @@ async def fetch_alerts() -> dict[str, dict]:
 
 
 async def current_alerts() -> dict[str, dict]:
-    if last_alerts is not None and time.monotonic() - last_alerts_at < 3 * config.ALERTS_POLL_SECONDS:
+    if last_alerts is not None and time.monotonic() - last_alerts_at < 3 * alerts.poll_seconds():
         return last_alerts
     return await fetch_alerts()
 
@@ -335,7 +363,7 @@ async def alerts_loop():
             known = current
         except Exception as e:  # noqa: BLE001
             log.warning("alerts error: %s", alerts.err_text(e))
-        await asyncio.sleep(config.ALERTS_POLL_SECONDS)
+        await asyncio.sleep(alerts.poll_seconds())
 
 
 # ---------- команды ----------
@@ -368,7 +396,7 @@ async def cmd_settings(m: Message):
     sub = db.get(m.chat.id)
     if not sub:
         return await reply(m, "Ще не налаштовано. Натисни /start")
-    await reply(m, describe(sub) + "\n\nЩо змінити?", reply_markup=settings_kb())
+    await reply(m, describe(sub) + "\n\nЩо змінити?", reply_markup=settings_kb(is_owner(m.from_user.id)))
 
 
 @dp.message(Command("stop"))
@@ -401,6 +429,33 @@ async def cmd_compare(m: Message):
     if not config.ALERTS_COMPARE:
         return await reply(m, "Порівняння джерел вимкнено (ALERTS_COMPARE=1 у .env).")
     await reply(m, compare.report_from_file())
+
+
+@dp.message(Command("source"))
+async def cmd_source(m: Message):
+    uid = m.from_user.id
+    if not config.ADMIN_IDS and db.setting("owner") is None and m.chat.type == "private":
+        db.set_setting("owner", str(uid))   # первый, кто спросил в личке, — владелец
+        log.info("bot owner set to %s", uid)
+    if not is_owner(uid):
+        return await reply(m, "Джерело тривог може змінювати лише власник бота.")
+    await reply(m, source_text(), reply_markup=source_kb())
+
+
+@dp.callback_query(F.data.startswith("src:"))
+async def cb_source(c: CallbackQuery):
+    if not is_owner(c.from_user.id):
+        return await c.answer("Лише власник бота", show_alert=True)
+    src = c.data[4:]
+    if src in config.SOURCES and src != config.ALERTS_CHAIN[0]:
+        alerts.set_first(src)
+        db.set_setting("alerts_first", src)
+        log.info("alerts source chain set by %s: %s", c.from_user.id, config.ALERTS_CHAIN)
+    try:
+        await c.message.edit_text(source_text(), reply_markup=source_kb())
+    except TelegramBadRequest:   # нажали на уже выбранный — текст не изменился
+        pass
+    await c.answer()
 
 
 @dp.message(Command("raion"))
@@ -520,7 +575,7 @@ async def cb_remind(c: CallbackQuery):
         return
     n = int(c.data[3:])
     db.update(c.message.chat.id, remind=n)
-    await c.message.edit_text(describe(db.get(c.message.chat.id)), reply_markup=settings_kb())
+    await c.message.edit_text(describe(db.get(c.message.chat.id)), reply_markup=settings_kb(is_owner(c.from_user.id)))
     await c.answer("Без нагадувань" if n == 0 else f"Нагадуватиму за {n} хв")
 
 
@@ -529,7 +584,7 @@ async def cb_raion_clear(c: CallbackQuery):
     if not await cb_guard(c):
         return
     db.update(c.message.chat.id, raion=None)
-    await c.message.edit_text(describe(db.get(c.message.chat.id)), reply_markup=settings_kb())
+    await c.message.edit_text(describe(db.get(c.message.chat.id)), reply_markup=settings_kb(is_owner(c.from_user.id)))
     await c.answer()
 
 
@@ -646,9 +701,12 @@ async def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     if not config.BOT_TOKEN:
         raise SystemExit("Задай BOT_TOKEN в .env")
+    db = DB()
+    saved = db.setting("alerts_first")   # выбор из бота важнее ALERTS_SOURCE в .env
+    if saved in config.SOURCES:
+        alerts.set_first(saved)
     log.info("Источник тревог: %s (цепочка: %s)", alerts.source_name(),
              " → ".join(alerts.source_name(s) for s in config.ALERTS_CHAIN))
-    db = DB()
     bot = Bot(config.BOT_TOKEN)
     http = aiohttp.ClientSession()
     await bot.set_my_commands([

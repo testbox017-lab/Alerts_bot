@@ -105,3 +105,29 @@ def test_key_same_across_sources():
     a = {"location_title": "Куп’янський район", "alert_type": "air_raid", "location_uid": "1"}
     b = {"location_title": "Куп'янський  район", "alert_type": "air_raid", "location_uid": "123"}
     assert alerts.alert_key(a) == alerts.alert_key(b)
+
+
+def test_set_first_and_poll(monkeypatch):
+    monkeypatch.setattr(config, "SOURCES", CHAIN)
+    monkeypatch.setattr(config, "ALERTS_CHAIN", CHAIN)
+    monkeypatch.setattr(config, "ALERTS_POLL_SECONDS", 15)
+    monkeypatch.setattr(config, "UKRAINEALARM_POLL_SECONDS", 60)
+    monkeypatch.setattr(alerts, "state", alerts._State())
+    assert alerts.poll_seconds() == 15
+    alerts.state.idx = 1               # alerts.in.ua упал, работаем с ukrainealarm
+    assert alerts.poll_seconds() == 60
+    alerts.set_first("ukrainealarm")
+    assert config.ALERTS_CHAIN == ["ukrainealarm", "alertsinua", "mirror"]
+    assert alerts.state.idx == 0 and alerts.poll_seconds() == 60
+    alerts.set_first("mirror")
+    assert config.ALERTS_CHAIN == ["mirror", "alertsinua", "ukrainealarm"]
+    assert alerts.poll_seconds() == 15
+
+
+def test_db_settings():
+    from bot.db import DB
+    db = DB(":memory:")
+    assert db.setting("alerts_first") is None
+    db.set_setting("alerts_first", "ukrainealarm")
+    db.set_setting("alerts_first", "alertsinua")
+    assert db.setting("alerts_first") == "alertsinua"

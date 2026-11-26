@@ -11,14 +11,27 @@ UKRAINEALARM_TOKEN = os.environ.get("UKRAINEALARM_TOKEN", "")  # api.ukrainealar
 # ukrainealarm (нужен UKRAINEALARM_TOKEN), mirror (siren.pp.ua, без ключа, всегда
 # последний). Источники без ключа пропускаются. ALERTS_SOURCE ставит выбранный
 # источник первым в цепочке.
+# Первый источник можно сменить и из бота (⚙️ Налаштування → 📡 Джерело тривог),
+# выбор хранится в БД и важнее ALERTS_SOURCE.
 _AVAILABLE = [s for s, ok in (("alertsinua", ALERTS_TOKEN), ("ukrainealarm", UKRAINEALARM_TOKEN)) if ok]
-ALERTS_SOURCE = os.environ.get("ALERTS_SOURCE", "").strip().lower() or (
-    _AVAILABLE[0] if _AVAILABLE else "mirror")
-ALERTS_CHAIN = list(dict.fromkeys([ALERTS_SOURCE, *_AVAILABLE, "mirror"]))
+SOURCES = [*_AVAILABLE, "mirror"]   # из чего можно выбирать первый источник
+
+
+def make_chain(first: str) -> list[str]:
+    return list(dict.fromkeys([first, *SOURCES]))
+
+
+ALERTS_SOURCE = os.environ.get("ALERTS_SOURCE", "").strip().lower() or SOURCES[0]
+ALERTS_CHAIN = make_chain(ALERTS_SOURCE)
+# Telegram user id тех, кто может менять источник тревог (через запятую). Если пусто —
+# владельцем становится первый, кто отправит боту /source в личке (сохраняется в БД).
+ADMIN_IDS = {int(x) for x in os.environ.get("ADMIN_IDS", "").replace(" ", "").split(",") if x}
 DB_PATH = Path(os.environ.get("DB_PATH", "data/bot.db"))
 
 # alerts.in.ua просит не чаще ~8 запросов в минуту на токен
 ALERTS_POLL_SECONDS = int(os.environ.get("ALERTS_POLL_SECONDS", "30"))
+# ключ ukrainealarm пускает ~1 запрос в минуту: пока работаем с него, опрашиваем не чаще
+UKRAINEALARM_POLL_SECONDS = int(os.environ.get("UKRAINEALARM_POLL_SECONDS", "60"))
 # Сравнение alerts.in.ua и ukrainealarm (только лог, рассылка не меняется), см. bot/compare.py.
 # 60 с: ключ ukrainealarm отвечает 429 чаще ~1 запроса в минуту (проверено 2026-11-24 на OVH).
 ALERTS_COMPARE = os.environ.get("ALERTS_COMPARE", "0") == "1"

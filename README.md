@@ -50,6 +50,7 @@ nano .env   # вставить содержимое .env.example и заполн
   - `UKRAINEALARM_TOKEN` — официальный API «Повітряна тривога», форма запроса ключа на [api.ukrainealarm.com](https://api.ukrainealarm.com);
   - `ALERTS_TOKEN` — [devs.alerts.in.ua](https://devs.alerts.in.ua).
   Поставить источник первым в цепочке: `ALERTS_SOURCE=ukrainealarm|alertsinua|mirror`. После изменения `.env`: `cd ~/alerts_bot && docker compose up -d --force-recreate`.
+  Или прямо в боте, без перезапуска: ⚙️ Налаштування → 📡 Джерело тривог (кнопку видит только владелец бота). Выбор действует для всех чатов, хранится в `data/bot.db` и важнее `ALERTS_SOURCE`. Владелец — Telegram id из `ADMIN_IDS=123,456`; если не задано, им становится первый, кто напишет боту `/source` в личке. Когда бот работает с ukrainealarm.com по ключу, он опрашивает раз в минуту (`UKRAINEALARM_POLL_SECONDS=60`, лимит ключа), с остальных — раз в `ALERTS_POLL_SECONDS`.
   Какой источник быстрее: `ALERTS_COMPARE=1` (нужны оба ключа). Бот раз в минуту (чаще ключ ukrainealarm не пускает) опрашивает alerts.in.ua и ukrainealarm одновременно и пишет в `data/compare.jsonl`, кто раньше сообщил о тревоге и відбої и на сколько секунд. Рассылка при этом не меняется. Отчёт — команда `/compare`.
 
 Дальше всё делает GitHub Actions.
