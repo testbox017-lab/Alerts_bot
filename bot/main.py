@@ -291,10 +291,10 @@ def summary_text(sub: Sub, now: datetime) -> str:
         rows = db.alert_rows((now - timedelta(days=1)).timestamp())
         parts.append(digest.night_text(rows, sub.oblasts, sub.raion, now))
         if last_alerts is not None:
-            many = len(sub.oblasts) > 1
-            mine = sorted(alerts.fmt_alert(a, many) for a in last_alerts.values()
-                          if alerts.matches(a, sub.oblast, sub.raion))
-            parts.append("Зараз:\n" + "\n".join(mine) if mine else "🟢 Зараз тривог немає")
+            mine = [a for a in last_alerts.values()
+                    if alerts.matches(a, sub.oblast, sub.raion)]
+            parts.append("Зараз:\n" + alerts.fmt_list(mine, sub.oblasts)
+                         if mine else "🟢 Зараз тривог немає")
     return "\n\n".join(parts)
 
 
@@ -561,10 +561,8 @@ async def cmd_status(m: Message):
         cur = await current_alerts()
     except Exception as e:  # noqa: BLE001
         return await reply(m, f"Помилка API тривог: {alerts.err_text(e)}")
-    many = len(sub.oblasts) > 1
-    mine = [alerts.fmt_alert(a, many) for a in cur.values()
-            if alerts.matches(a, sub.oblast, sub.raion)]
-    text = "\n".join(sorted(mine)) if mine else "🟢 Тривог немає"
+    mine = [a for a in cur.values() if alerts.matches(a, sub.oblast, sub.raion)]
+    text = alerts.fmt_list(mine, sub.oblasts) if mine else "🟢 Тривог немає"
     await reply(m, f"{text}\n\nДжерело: {alerts.source_name()}",
                 reply_markup=kb([[("📊 Статистика", "st:1")]]))
 

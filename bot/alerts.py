@@ -183,3 +183,36 @@ def fmt_alert(a: dict, with_oblast: bool = False) -> str:
 
 def fmt_clear(a: dict, with_oblast: bool = False) -> str:
     return f'✅ Відбій: {place(a, with_oblast)}'
+
+
+def _sort_key(a: dict) -> tuple:
+    """Внутри области: сначала вся область, затем районы по алфавиту,
+    громады — сразу под своим районом."""
+    title = a.get("location_title") or ""
+    if a.get("location_type") == "oblast" or _norm(title) == _norm(a.get("location_oblast")):
+        return (0, "", 0, "", a.get("alert_type") or "")
+    raion = a.get("location_raion") or title
+    return (1, raion.lower(), 0 if _norm(raion) == _norm(title) else 1,
+            title.lower(), a.get("alert_type") or "")
+
+
+def fmt_list(items, oblasts: list[str]) -> str:
+    """Список текущих тревог чата, сгруппированный по областям.
+
+    Области — в порядке, выбранном в чате (главная первая); при одной
+    области заголовков нет. Пустая строка, если тревог нет.
+    """
+    order = {_norm(o): i for i, o in enumerate(oblasts)}
+    groups: dict[str, list[dict]] = {}
+    for a in items:
+        ob = a.get("location_oblast") or a.get("location_title") or ""
+        groups.setdefault(ob, []).append(a)
+    keys = sorted(groups, key=lambda o: (order.get(_norm(o), len(order)), o))
+    many = len(oblasts) > 1
+    blocks = []
+    for ob in keys:
+        lines = [fmt_alert(a) for a in sorted(groups[ob], key=_sort_key)]
+        if many:
+            lines.insert(0, f"📍 {ob}")
+        blocks.append("\n".join(lines))
+    return ("\n\n" if many else "\n").join(blocks)
