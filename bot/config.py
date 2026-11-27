@@ -22,6 +22,8 @@ def make_chain(first: str) -> list[str]:
 
 
 ALERTS_SOURCE = os.environ.get("ALERTS_SOURCE", "").strip().lower() or SOURCES[0]
+if ALERTS_SOURCE not in SOURCES:   # опечатка или источник без ключа — берём порядок по умолчанию
+    ALERTS_SOURCE = SOURCES[0]
 ALERTS_CHAIN = make_chain(ALERTS_SOURCE)
 # Telegram user id тех, кто может менять источник тревог (через запятую). Если пусто —
 # владельцем становится первый, кто отправит боту /source в личке (сохраняется в БД).

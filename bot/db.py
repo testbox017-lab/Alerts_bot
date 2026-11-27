@@ -92,6 +92,12 @@ class DB:
             self.c.execute(f"DELETE FROM {t} WHERE chat_id=?", (chat_id,))
         self.c.commit()
 
+    def move_chat(self, old_id: int, new_id: int):
+        """Группа стала супергруппой и получила новый chat_id — переносим всё на него."""
+        for t in ("subs", "overrides", "sent"):
+            self.c.execute(f"UPDATE OR REPLACE {t} SET chat_id=? WHERE chat_id=?", (new_id, old_id))
+        self.c.commit()
+
     def all(self) -> list[Sub]:
         return [Sub(*r) for r in self.c.execute(
             "SELECT chat_id,title,oblast,raion,power,queue,remind FROM subs")]

@@ -23,7 +23,7 @@ bot/
   alerts.py       цепочка источников тревог, fallback, фильтры по области/району, форматирование
   ukrainealarm.py клиент API ukrainealarm (и зеркала siren.pp.ua), конвертация в формат alerts.in.ua
   compare.py      режим ALERTS_COMPARE: кто из источников раньше сообщает о тревоге, /compare
-  power.py        парсеры графиков (GPV/OE, svitlo, Миколаїв, Koly Ye, Світлячок), интервалы, напоминания, «устарел ли график»
+  power.py        парсеры графиков (GPV/OE, Миколаїв, Koly Ye, Світлячок), интервалы, напоминания, «устарел ли график»
   regions.py      список областей и карта «поставщик графика → URL источника»
   sender.py       параллельная рассылка с ограничением скорости и обработкой 429
   db.py           SQLite: subs, overrides (ручные графики /svet), sched (кэш), settings, sent
@@ -37,7 +37,7 @@ README.md (рус.), README.en.md (англ.) — пользовательска
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest -q          # 39 тестов, ~1 с, сеть не нужна
+python -m pytest -q          # 46 тестов, ~2 с, сеть не нужна
 cp .env.example .env         # заполнить BOT_TOKEN и ключи
 python -m bot                # локально
 docker compose up -d --build # в Docker
