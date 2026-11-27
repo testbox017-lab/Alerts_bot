@@ -22,6 +22,8 @@ def make_chain(first: str) -> list[str]:
 
 
 ALERTS_SOURCE = os.environ.get("ALERTS_SOURCE", "").strip().lower() or SOURCES[0]
+if ALERTS_SOURCE not in SOURCES:   # опечатка или источник без ключа — берём порядок по умолчанию
+    ALERTS_SOURCE = SOURCES[0]
 ALERTS_CHAIN = make_chain(ALERTS_SOURCE)
 # Telegram user id тех, кто может менять источник тревог (через запятую). Если пусто —
 # владельцем становится первый, кто отправит боту /source в личке (сохраняется в БД).
@@ -32,16 +34,17 @@ DB_PATH = Path(os.environ.get("DB_PATH", "data/bot.db"))
 ALERTS_POLL_SECONDS = int(os.environ.get("ALERTS_POLL_SECONDS", "30"))
 # ключ ukrainealarm пускает ~1 запрос в минуту: пока работаем с него, опрашиваем не чаще
 UKRAINEALARM_POLL_SECONDS = int(os.environ.get("UKRAINEALARM_POLL_SECONDS", "60"))
-# Сравнение alerts.in.ua и ukrainealarm (только лог, рассылка не меняется), см. bot/compare.py.
-# 60 с: ключ ukrainealarm отвечает 429 чаще ~1 запроса в минуту (проверено 2026-11-24 на OVH).
-ALERTS_COMPARE = os.environ.get("ALERTS_COMPARE", "0") == "1"
-ALERTS_COMPARE_SECONDS = int(os.environ.get("ALERTS_COMPARE_SECONDS", "60"))
 POWER_POLL_SECONDS = int(os.environ.get("POWER_POLL_SECONDS", "600"))
 # Предупреждать подписчиков, если график не грузится дольше N минут
 # или источник не обновлялся дольше N часов (обычно он обновляется хотя бы раз в сутки)
 POWER_UNREACHABLE_MIN = int(os.environ.get("POWER_UNREACHABLE_MIN", "60"))
 POWER_STALE_HOURS = int(os.environ.get("POWER_STALE_HOURS", "26"))
 DEFAULT_REMIND = int(os.environ.get("DEFAULT_REMIND", "30"))
+# Утренняя сводка (график на сегодня + тревоги за ночь) для НОВЫХ чатов: время «07:00»
+# или пусто — выключена. Каждый чат меняет её сам (⚙️ → ☀️ Ранкове зведення, /summary).
+DEFAULT_SUMMARY = os.environ.get("DEFAULT_SUMMARY", "07:00").strip()
+# Сколько дней хранить журнал тревог для статистики (/stats)
+ALERT_LOG_DAYS = int(os.environ.get("ALERT_LOG_DAYS", "31"))
 # "можливе відключення" (mfirst/msecond) считать отключением
 POSSIBLE_AS_OFF = os.environ.get("POSSIBLE_AS_OFF", "1") == "1"
 

@@ -80,7 +80,8 @@ class FakeTelegram:
 def make_db(path: str, users: int) -> DB:
     db = DB(path)
     rows = [(1_000_000 + i, f"user{i}", OBLAST, None, "chernihiv", "1.1", 30) for i in range(users)]
-    db.c.executemany("INSERT INTO subs VALUES(?,?,?,?,?,?,?)", rows)
+    db.c.executemany("INSERT INTO subs(chat_id,title,oblast,raion,power,queue,remind) "
+                     "VALUES(?,?,?,?,?,?,?)", rows)
     db.commit()
     return db
 

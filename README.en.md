@@ -5,7 +5,7 @@
 A Telegram bot for Ukraine that tells you, your family or your group chat about:
 
 - 🚨 **air-raid alerts** in a chosen oblast (optionally narrowed down to specific raions/hromadas), from the "Povitriana tryvoha" app API ([ukrainealarm.com](https://api.ukrainealarm.com)) or [alerts.in.ua](https://alerts.in.ua);
-- 💡 **scheduled power outages** for your queue, with a reminder N minutes before the power goes off and comes back. Schedules come from the open data collectors [OE_OUTAGE_DATA](https://github.com/yaroslav2901/OE_OUTAGE_DATA) and [outage-data-ua](https://github.com/Baskerville42/outage-data-ua); for Vinnytsia oblast from [gpv-voe-vinnytsia](https://github.com/vn-progr/gpv-voe-vinnytsia), for Mykolaiv from the official API [off.energy.mk.ua](https://off.energy.mk.ua), for Sumy, Volyn and Kirovohrad from the [Koly Ye](https://github.com/vkardin/koly) collector. Kherson and Chernivtsi oblasts have no open source yet.
+- 💡 **scheduled power outages** for your queue, with a reminder N minutes before the power goes off and comes back. Schedules come from the open data collectors [OE_OUTAGE_DATA](https://github.com/yaroslav2901/OE_OUTAGE_DATA) and [outage-data-ua](https://github.com/Baskerville42/outage-data-ua); for Vinnytsia oblast from [gpv-voe-vinnytsia](https://github.com/vn-progr/gpv-voe-vinnytsia), for Mykolaiv from the official API [off.energy.mk.ua](https://off.energy.mk.ua), for Sumy, Volyn and Kirovohrad from the [Koly Ye](https://github.com/vkardin/koly) collector, for Chernivtsi from the [svitlyachok-data](https://github.com/ABovsh/svitlyachok-data) collector (groups 1–12, scraped from oblenergo.cv.ua). Kherson oblast has no open source: Khersonoblenergo shows schedules only in its personal account.
 
 Every chat (private or group) picks its own oblast and queue with buttons after `/start`, so people in different regions can use the same bot.
 
@@ -19,7 +19,7 @@ In other oblasts alerts still work, and the outage schedule can be entered by ha
 
 ## Buttons and commands
 
-After `/start` a menu appears at the bottom of the screen: **💡 Power schedule**, **🚨 Alerts now**, **⚙️ Settings** (oblast, queue, reminders, raions, all with buttons) and **❓ Help**. The bot's interface is in Ukrainian. The same actions are available as commands:
+After `/start` a menu appears at the bottom of the screen: **💡 Power schedule**, **🚨 Alerts now**, **⚙️ Settings** (oblast, queue, reminders, raions, morning summary, quiet hours, all with buttons) and **❓ Help**. The bot's interface is in Ukrainian. The same actions are available as commands:
 
 | Command | What it does |
 |---|---|
@@ -29,7 +29,10 @@ After `/start` a menu appears at the bottom of the screen: **💡 Power schedule
 | `/raion Ніжинський, Бахмацька` | only alerts for the whole oblast plus these raions/hromadas; `/raion clear` for the whole oblast |
 | `/svet` | schedule for today and tomorrow (the "📋 All queues" button shows every queue of the provider) |
 | `/svet 06:00-09:00 15-18` | manual override for today (`/svet zavtra …` for tomorrow, `/svet -` for no outages, `/svet clear` to remove overrides) |
-| `/remind 30` | how many minutes in advance to warn (`0` turns reminders off) |
+| `/remind 30` | how many minutes in advance to warn before power goes off and comes back (`0` turns reminders off) |
+| `/stats` | alert statistics for your oblasts: today and the last 7 days (also the "📊 Статистика" button under "🚨 Alerts now") |
+| `/summary 7:00` | morning summary: today's power schedule, alerts overnight (since 22:00) and whether an alert is active now; `/summary off` turns it off |
+| `/quiet 23-7` | quiet hours: schedules, reminders and all-clears arrive silently, alerts always ring; `/quiet off` turns it off |
 | `/stop` | unsubscribe |
 
 In groups only admins can change settings. Commands always work; for the menu buttons to work in a group, make the bot a group admin (or disable its privacy mode in @BotFather → `/setprivacy` → Disable).
@@ -95,6 +98,8 @@ While the secrets are not set, the deploy step is skipped with a warning.
 | `BACKUP_KEEP` | 14 | how many backups to keep in `data/backups` |
 | `BACKUP_TELEGRAM` | 1 | `1` also sends the backup file to the bot owner |
 | `DEFAULT_REMIND` | 30 | default reminder lead time, minutes |
+| `DEFAULT_SUMMARY` | 07:00 | morning summary time for new chats (and existing ones on first start after the update); empty = off |
+| `ALERT_LOG_DAYS` | 31 | how many days of alert history to keep for `/stats` |
 | `POSSIBLE_AS_OFF` | 1 | `1` treats "possible outage" slots as outages, `0` ignores them |
 
 ## Manual run / development

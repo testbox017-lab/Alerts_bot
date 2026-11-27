@@ -7,13 +7,14 @@ from datetime import datetime, timedelta
 
 import aiohttp
 from aiogram import Bot, Dispatcher, F
-from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter, TelegramBadRequest
+from aiogram.exceptions import (TelegramBadRequest, TelegramForbiddenError, TelegramMigrateToChat,
+                                TelegramNetworkError, TelegramRetryAfter, TelegramServerError)
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import (BotCommand, CallbackQuery, InlineKeyboardButton,
                            InlineKeyboardMarkup, KeyboardButton, Message,
                            ReplyKeyboardMarkup, FSInputFile)
 
-from . import alerts, backup, compare, config, power, sender
+from . import alerts, backup, config, digest, power, sender
 from .config import TZ
 from .db import DB, Sub
 from .regions import OBLASTS, POWER_SOURCES, sources_for_oblast
@@ -30,7 +31,8 @@ power_ok_at: dict[str, datetime] = {}
 power_updated_at: dict[str, datetime | None] = {}
 power_problem: dict[str, str | None] = {}
 # официальные страницы графиков, на которые отправляем при проблемах с источником
-POWER_SITES = {"chernihiv": "https://chernihivoblenergo.com.ua/blackouts"}
+POWER_SITES = {"chernihiv": "https://chernihivoblenergo.com.ua/blackouts",
+               "chernivtsi": "https://oblenergo.cv.ua/shutdowns/"}
 
 HELP = (
     "Я надсилаю повітряні тривоги по твоїх областях (до 5) або районах і нагадую про "
@@ -45,6 +47,9 @@ HELP = (
     "/svet zavtra 00-03 — вручну на завтра, /svet - — сьогодні без відключень\n"
     "/svet clear — прибрати ручні правки\n"
     "/remind 30 — за скільки хвилин попереджати (0 — вимкнути)\n"
+    "/stats — статистика тривог за день і тиждень\n"
+    "/summary 7:00 — ранкове зведення: світло на день і тривоги за ніч (/summary off — вимкнути)\n"
+    "/quiet 23-7 — тихі години: вночі повідомлення без звуку, крім тривог (/quiet off)\n"
     "/stop — відписатися\n\n"
     "У групі змінювати налаштування можуть лише адміни."
 )
@@ -83,17 +88,38 @@ _bg_tasks: set[asyncio.Task] = set()
 _alerts_lock = asyncio.Lock()   # тревоги уходят пачками строго по очереди
 
 
+class Loud(str):
+    """Текст, который приходит со звуком и в тихие часы (начало тревоги)."""
+
+
+def silent_now(chat_id: int, text: str) -> bool:
+    if isinstance(text, Loud):
+        return False
+    sub = db.get(chat_id)
+    return bool(sub and digest.in_quiet(sub.quiet, datetime.now(TZ)))
+
+
 async def send(chat_id: int, text: str):
-    for _ in range(config.SEND_ATTEMPTS):
+    silent = silent_now(chat_id, text)
+    for attempt in range(config.SEND_ATTEMPTS):
         await limiter.wait()
         try:
             await bot.send_message(chat_id, text, disable_web_page_preview=True,
-                                   reply_markup=MENU)
+                                   disable_notification=silent, reply_markup=MENU)
             log.info("sent to %s: %s", chat_id, text[:80])
             limiter.success()
             return
         except TelegramRetryAfter as e:
             limiter.pause(e.retry_after + 1)
+        except TelegramMigrateToChat as e:
+            # группа стала супергруппой: у неё новый id, переносим настройки и шлём туда
+            log.info("chat %s migrated to %s", chat_id, e.migrate_to_chat_id)
+            db.move_chat(chat_id, e.migrate_to_chat_id)
+            chat_id = e.migrate_to_chat_id
+        except (TelegramNetworkError, TelegramServerError) as e:
+            # сбой сети или 5xx у Telegram — не теряем тревогу, пробуем ещё раз
+            log.warning("send to %s failed (%s), retry", chat_id, e)
+            await asyncio.sleep(2 * (attempt + 1))
         except TelegramForbiddenError:
             log.info("chat %s blocked/kicked the bot, removing", chat_id)
             db.delete(chat_id)
@@ -101,7 +127,7 @@ async def send(chat_id: int, text: str):
         except Exception as e:  # noqa: BLE001
             log.warning("send to %s failed: %s", chat_id, e)
             return
-    log.warning("send to %s dropped after %s attempts (429): %s",
+    log.warning("send to %s dropped after %s attempts: %s",
                 chat_id, config.SEND_ATTEMPTS, text[:80])
 
 
@@ -123,11 +149,14 @@ MENU = ReplyKeyboardMarkup(
               [KeyboardButton(text=BTN_SETTINGS), KeyboardButton(text=BTN_HELP)]],
     resize_keyboard=True, is_persistent=True)
 REMIND_CHOICES = [0, 10, 15, 30, 60]
+SUMMARY_CHOICES = ["06:00", "07:00", "08:00", "09:00"]
+QUIET_CHOICES = ["22:00-07:00", "23:00-07:00", "23:00-08:00", "00:00-07:00"]
 
 
 def settings_kb(owner: bool = False) -> InlineKeyboardMarkup:
     rows = [[("📍 Область", "set:ob"), ("💡 Світло і черга", "set:pw")],
-            [("⏰ Нагадування", "set:rm"), ("🔎 Райони", "set:rn")]]
+            [("⏰ Нагадування", "set:rm"), ("🔎 Райони", "set:rn")],
+            [("☀️ Ранкове зведення", "set:sm"), ("🌙 Тихі години", "set:qt")]]
     if owner:   # источник общий для всех чатов — кнопка только владельцу бота
         rows.append([("📡 Джерело тривог", "src:menu")])
     return kb(rows)
@@ -218,11 +247,79 @@ def describe(sub: Sub) -> str:
     if sub.raion:
         lines.append(f"🔎 Фільтр районів: {sub.raion}")
     if sub.power:
-        lines.append(f"💡 Світло: {POWER_SOURCES[sub.power][0]}, {queue_label(sub)}")
+        name = POWER_SOURCES[sub.power][0] if sub.power in POWER_SOURCES else sub.power
+        lines.append(f"💡 Світло: {name}, {queue_label(sub)}")
     else:
         lines.append("💡 Графік світла: вимкнено")
     lines.append(f"⏰ Нагадування за {sub.remind} хв" if sub.remind else "⏰ Нагадування вимкнено")
+    lines.append(f"☀️ Ранкове зведення о {sub.summary}" if sub.summary else "☀️ Ранкове зведення вимкнено")
+    lines.append(f"🌙 Тихі години {quiet_label(sub.quiet)}" if sub.quiet else "🌙 Тихі години вимкнено")
     return "\n".join(lines)
+
+
+def quiet_label(spec: str) -> str:
+    return spec.replace("-", "–")
+
+
+# ---------- статистика и утренняя сводка ----------
+def stats_text(sub: Sub, days: int) -> str:
+    now = datetime.now(TZ)
+    rows = db.alert_rows((now - timedelta(days=days + 1)).timestamp())
+    return digest.stats_text(rows, sub.oblasts, sub.raion, now, days, db.alert_log_since())
+
+
+def stats_kb(days: int) -> InlineKeyboardMarkup:
+    return kb([[(("✅ " if d == days else "") + label, f"st:{d}")
+                for d, label in ((1, "Сьогодні"), (7, "7 днів"))]])
+
+
+def summary_text(sub: Sub, now: datetime) -> str:
+    day = now.date().isoformat()
+    parts = [f"☀️ Доброго ранку! Зведення на {now:%d.%m}"]
+    if sub.power or db.overrides(sub.chat_id):
+        per_queue = db.schedules_for(sub, day)
+        if not per_queue:
+            parts.append("💡 Графіка світла на сьогодні ще немає")
+        for q, by_day in per_queue.items():
+            tag = f" (черга {q})" if q else ""
+            if day not in by_day:
+                parts.append(f"💡 Світло{tag}: графіка на сьогодні ще немає")
+            else:
+                body = ", ".join(f"{a}–{b}" for a, b in by_day[day]) or "без відключень"
+                parts.append(f"💡 Відключення{tag}: {body}")
+    if sub.oblasts:
+        rows = db.alert_rows((now - timedelta(days=1)).timestamp())
+        parts.append(digest.night_text(rows, sub.oblasts, sub.raion, now))
+        if last_alerts is not None:
+            many = len(sub.oblasts) > 1
+            mine = sorted(alerts.fmt_alert(a, many) for a in last_alerts.values()
+                          if alerts.matches(a, sub.oblast, sub.raion))
+            parts.append("Зараз:\n" + "\n".join(mine) if mine else "🟢 Зараз тривог немає")
+    return "\n\n".join(parts)
+
+
+async def summary_loop():
+    while True:
+        now = datetime.now(TZ)
+        day = now.date().isoformat()
+        items = []
+        for sub in db.all():
+            key = f"summary|{day}"
+            if not digest.summary_due(sub.summary, now) or db.was_sent(sub.chat_id, key):
+                continue
+            if not sub.oblasts and not sub.power:
+                continue
+            try:
+                text = summary_text(sub, now)
+            except Exception as e:  # noqa: BLE001
+                log.warning("summary for %s failed: %s", sub.chat_id, e)
+                continue
+            db.mark_sent(sub.chat_id, key, day, commit=False)
+            items.append((sub.chat_id, text))
+        db.commit()
+        db.alert_log_cleanup((now - timedelta(days=config.ALERT_LOG_DAYS)).timestamp())
+        await send_many(items)
+        await asyncio.sleep(30)
 
 
 def svet_kb(sub: Sub) -> InlineKeyboardMarkup | None:
@@ -283,10 +380,15 @@ async def refresh_source(src: str) -> dict[str, list[str]]:
 async def check_power_health(src: str):
     """Один раз предупреждаем подписчиков источника о проблеме и один раз — когда прошла."""
     problem = power.health_problem(datetime.now(TZ), power_ok_at[src], power_updated_at.get(src))
-    if problem == power_problem.get(src):
+    # состояние храним в БД: иначе после каждого деплоя бот снова рассылал бы
+    # то же предупреждение «график устарел»
+    was = power_problem.get(src, db.setting(f"power_problem:{src}") or None)
+    if problem == was or (problem is None and src not in power_updated_at):
+        # без единой удачной загрузки после запуска «всё снова хорошо» не объявляем
+        power_problem[src] = was
         return
-    was = power_problem.get(src)
     power_problem[src] = problem
+    db.set_setting(f"power_problem:{src}", problem or "")
     log.warning("power source %s health: %s -> %s", src, was, problem)
     text = power.fmt_health(problem, POWER_SOURCES[src][0], power_updated_at.get(src),
                             POWER_SITES.get(src))
@@ -296,7 +398,8 @@ async def check_power_health(src: str):
 async def power_loop():
     while True:
         db.cleanup((datetime.now(TZ).date() - timedelta(days=1)).isoformat())
-        for src in db.used_sources():
+        # источник могли убрать из regions.py, а в БД он остался — пропускаем
+        for src in db.used_sources() & POWER_SOURCES.keys():
             power_ok_at.setdefault(src, datetime.now(TZ))  # отсчёт «не грузится» — с запуска
             try:
                 changed = await refresh_source(src)
@@ -371,10 +474,16 @@ async def current_alerts() -> dict[str, dict]:
 async def alerts_loop():
     global last_alerts, last_alerts_at
     known: dict[str, dict] | None = None
+    seen = db.setting("alerts_seen")   # последний опрос до перезапуска — для журнала тревог
     while True:
         try:
             current = await fetch_alerts()
             last_alerts, last_alerts_at = current, time.monotonic()
+            try:
+                db.alerts_sync(current, time.time(),
+                               gone_at=float(seen) if known is None and seen else None)
+            except Exception as e:  # noqa: BLE001
+                log.warning("alert log: %s", e)
             if known is not None:
                 new = [current[k] for k in current.keys() - known.keys()]
                 gone = [known[k] for k in known.keys() - current.keys()]
@@ -386,7 +495,7 @@ async def alerts_loop():
                         many = len(sub.oblasts) > 1
                         for a in new:
                             if alerts.matches(a, sub.oblast, sub.raion):
-                                items.append((sub.chat_id, alerts.fmt_alert(a, many)))
+                                items.append((sub.chat_id, Loud(alerts.fmt_alert(a, many))))
                         for a in gone:
                             if alerts.matches(a, sub.oblast, sub.raion):
                                 items.append((sub.chat_id, alerts.fmt_clear(a, many)))
@@ -456,14 +565,97 @@ async def cmd_status(m: Message):
     mine = [alerts.fmt_alert(a, many) for a in cur.values()
             if alerts.matches(a, sub.oblast, sub.raion)]
     text = "\n".join(sorted(mine)) if mine else "🟢 Тривог немає"
-    await reply(m, f"{text}\n\nДжерело: {alerts.source_name()}")
+    await reply(m, f"{text}\n\nДжерело: {alerts.source_name()}",
+                reply_markup=kb([[("📊 Статистика", "st:1")]]))
 
 
-@dp.message(Command("compare"))
-async def cmd_compare(m: Message):
-    if not config.ALERTS_COMPARE:
-        return await reply(m, "Порівняння джерел вимкнено (ALERTS_COMPARE=1 у .env).")
-    await reply(m, compare.report_from_file())
+@dp.message(Command("stats"))
+async def cmd_stats(m: Message):
+    sub = db.get(m.chat.id)
+    if not sub or not sub.oblast:
+        return await reply(m, "Спочатку обери область: /start")
+    await reply(m, stats_text(sub, 1), reply_markup=stats_kb(1))
+
+
+@dp.callback_query(F.data.startswith("st:"))
+async def cb_stats(c: CallbackQuery):
+    sub = db.get(c.message.chat.id)
+    if not sub or not sub.oblast:
+        return await c.answer("Спочатку обери область: /start", show_alert=True)
+    days = 7 if c.data == "st:7" else 1
+    text = stats_text(sub, days)
+    try:
+        if c.message.text and c.message.text.startswith("📊"):
+            await c.message.edit_text(text, reply_markup=stats_kb(days))
+        else:   # кнопка под «Тривоги зараз» — статистику отдельным сообщением
+            await c.message.answer(text, reply_markup=stats_kb(days))
+    except TelegramBadRequest:   # текст не изменился
+        pass
+    await c.answer()
+
+
+@dp.message(Command("summary"))
+async def cmd_summary(m: Message, command: CommandObject):
+    sub = db.get(m.chat.id)
+    if not sub:
+        return await reply(m, "Спочатку /start")
+    arg = (command.args or "").strip().lower()
+    if not arg:
+        return await reply(m, summary_prompt(sub), reply_markup=summary_kb())
+    if not await guard(m):
+        return
+    if arg in ("off", "0", "-", "вимкнути"):
+        value = None
+    else:
+        try:
+            value = digest.parse_hhmm(arg)
+        except ValueError:
+            return await reply(m, "Вкажи час, напр. /summary 7:00 (або /summary off)")
+    db.update(m.chat.id, summary=value)
+    await reply(m, f"☀️ Ранкове зведення о {value}" if value else "☀️ Ранкове зведення вимкнено")
+
+
+@dp.message(Command("quiet"))
+async def cmd_quiet(m: Message, command: CommandObject):
+    sub = db.get(m.chat.id)
+    if not sub:
+        return await reply(m, "Спочатку /start")
+    arg = (command.args or "").strip().lower()
+    if not arg:
+        return await reply(m, quiet_prompt(sub), reply_markup=quiet_kb())
+    if not await guard(m):
+        return
+    if arg in ("off", "0", "-", "вимкнути"):
+        value = None
+    else:
+        try:
+            value = digest.parse_quiet(arg)
+        except ValueError:
+            return await reply(m, "Вкажи проміжок, напр. /quiet 23-7 або /quiet 22:30-07:00 "
+                                  "(/quiet off — вимкнути)")
+    db.update(m.chat.id, quiet=value)
+    await reply(m, f"🌙 Тихі години {quiet_label(value)}: без звуку, крім тривог"
+                if value else "🌙 Тихі години вимкнено")
+
+
+def summary_prompt(sub: Sub) -> str:
+    now = f"о {sub.summary}" if sub.summary else "вимкнено"
+    return (f"☀️ Ранкове зведення: {now}\n\nЩоранку: графік світла на сьогодні, тривоги за ніч "
+            "і чи є тривога зараз. Коли надсилати? (свій час: /summary 6:30)")
+
+
+def summary_kb() -> InlineKeyboardMarkup:
+    return kb([[(t, f"sm:{t}") for t in SUMMARY_CHOICES], [("вимкнути", "sm:-")]])
+
+
+def quiet_prompt(sub: Sub) -> str:
+    now = quiet_label(sub.quiet) if sub.quiet else "вимкнено"
+    return (f"🌙 Тихі години: {now}\n\nУ цей час графіки, нагадування і відбої приходять "
+            "без звуку. Тривоги — завжди зі звуком. (свій проміжок: /quiet 22:30-6)")
+
+
+def quiet_kb() -> InlineKeyboardMarkup:
+    return kb(chunk([(quiet_label(q), f"qt:{q}") for q in QUIET_CHOICES], 2) + [[("вимкнути", "qt:-")]])
 
 
 @dp.message(Command("source"))
@@ -619,6 +811,10 @@ async def cb_set(c: CallbackQuery):
         btns = [("вимкнути" if n == 0 else f"{n} хв", f"rm:{n}") for n in REMIND_CHOICES]
         await c.message.edit_text(f"Зараз: за {sub.remind} хв. За скільки попереджати "
                                   "про відключення і включення?", reply_markup=kb([btns]))
+    elif c.data == "set:sm":
+        await c.message.edit_text(summary_prompt(sub), reply_markup=summary_kb())
+    elif c.data == "set:qt":
+        await c.message.edit_text(quiet_prompt(sub), reply_markup=quiet_kb())
     elif c.data == "set:rn":
         await c.message.edit_text(
             f"🔎 Фільтр: {sub.raion or 'вся область'}\n\n"
@@ -653,6 +849,24 @@ async def cb_remind(c: CallbackQuery):
     db.update(c.message.chat.id, remind=n)
     await c.message.edit_text(describe(db.get(c.message.chat.id)), reply_markup=settings_kb(is_owner(c.from_user.id)))
     await c.answer("Без нагадувань" if n == 0 else f"Нагадуватиму за {n} хв")
+
+
+@dp.callback_query(F.data.startswith("sm:") | F.data.startswith("qt:"))
+async def cb_summary_quiet(c: CallbackQuery):
+    if not await cb_guard(c):
+        return
+    kind, value = c.data[:2], c.data[3:]
+    ok = SUMMARY_CHOICES if kind == "sm" else QUIET_CHOICES
+    value = value if value in ok else None
+    if kind == "sm":
+        db.update(c.message.chat.id, summary=value)
+        note = f"Зведення о {value}" if value else "Зведення вимкнено"
+    else:
+        db.update(c.message.chat.id, quiet=value)
+        note = f"Тихі години {quiet_label(value)}" if value else "Тихі години вимкнено"
+    await c.message.edit_text(describe(db.get(c.message.chat.id)),
+                              reply_markup=settings_kb(is_owner(c.from_user.id)))
+    await c.answer(note)
 
 
 @dp.callback_query(F.data == "rn:clear")
@@ -772,6 +986,22 @@ async def fallback(m: Message):
 
 
 # ---------- запуск ----------
+async def supervise(loop_fn):
+    """Перезапускает фоновый цикл после неожиданной ошибки. Без этого задача
+    тихо умирает (её никто не ждёт), и, например, напоминания перестают
+    приходить до перезапуска контейнера."""
+    name = getattr(loop_fn, "__name__", "loop")
+    while True:
+        try:
+            await loop_fn()
+            return
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            log.exception("%s упал, перезапуск через 30 с", name)
+            await asyncio.sleep(30)
+
+
 async def main():
     global db, bot, http
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -789,13 +1019,12 @@ async def main():
         BotCommand(command="start", description="Налаштувати"),
         BotCommand(command="status", description="Тривоги зараз"),
         BotCommand(command="svet", description="Графік світла"),
+        BotCommand(command="stats", description="Статистика тривог"),
         BotCommand(command="settings", description="Налаштування"),
         BotCommand(command="help", description="Довідка"),
     ])
-    loops = [power_loop, reminder_loop, alerts_loop, backup_loop]
-    tasks = [asyncio.create_task(f()) for f in loops]
-    if config.ALERTS_COMPARE:
-        tasks.append(asyncio.create_task(compare.compare_loop(http)))
+    loops = [power_loop, reminder_loop, summary_loop, alerts_loop, backup_loop]
+    tasks = [asyncio.create_task(supervise(f)) for f in loops]
     try:
         await dp.start_polling(bot)
     finally:

@@ -40,7 +40,18 @@ CREATE TABLE IF NOT EXISTS sent (
     day     TEXT NOT NULL,
     PRIMARY KEY (chat_id, key)
 );
+CREATE TABLE IF NOT EXISTS alert_log (
+    id     INTEGER PRIMARY KEY,
+    key    TEXT NOT NULL,
+    data   TEXT NOT NULL,
+    start_ts REAL NOT NULL,
+    end_ts   REAL
+);
+CREATE INDEX IF NOT EXISTS alert_log_open ON alert_log(key, end_ts);
 """
+# столбцы, добавленные после первого запуска: (имя, определение)
+SUB_COLUMNS_ADDED = [("summary", "TEXT"), ("quiet", "TEXT")]
+SUB_COLS = "chat_id,title,oblast,raion,power,queue,remind,summary,quiet"
 
 
 @dataclass
@@ -52,6 +63,8 @@ class Sub:
     power: str | None
     queue: str | None  # одна или несколько через запятую: "1.1,3.2"
     remind: int
+    summary: str | None = None  # время утренней сводки «07:00» или None — выключена
+    quiet: str | None = None    # тихие часы «23:00-07:00» или None
 
     @property
     def oblasts(self) -> list[str]:
@@ -68,17 +81,23 @@ class DB:
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.c = sqlite3.connect(path)
         self.c.executescript(SCHEMA)
+        have = {r[1] for r in self.c.execute("PRAGMA table_info(subs)")}
+        for name, decl in SUB_COLUMNS_ADDED:
+            if name not in have:
+                self.c.execute(f"ALTER TABLE subs ADD COLUMN {name} {decl}")
+                if name == "summary" and config.DEFAULT_SUMMARY:   # сводка включена и старым чатам
+                    self.c.execute("UPDATE subs SET summary=?", (config.DEFAULT_SUMMARY,))
+        self.c.commit()
 
     # ----- подписчики -----
     def get(self, chat_id: int) -> Sub | None:
-        r = self.c.execute("SELECT chat_id,title,oblast,raion,power,queue,remind "
-                           "FROM subs WHERE chat_id=?", (chat_id,)).fetchone()
+        r = self.c.execute(f"SELECT {SUB_COLS} FROM subs WHERE chat_id=?", (chat_id,)).fetchone()
         return Sub(*r) if r else None
 
     def ensure(self, chat_id: int, title: str | None) -> Sub:
-        self.c.execute("INSERT INTO subs(chat_id,title,remind) VALUES(?,?,?) "
+        self.c.execute("INSERT INTO subs(chat_id,title,remind,summary) VALUES(?,?,?,?) "
                        "ON CONFLICT(chat_id) DO UPDATE SET title=excluded.title",
-                       (chat_id, title, config.DEFAULT_REMIND))
+                       (chat_id, title, config.DEFAULT_REMIND, config.DEFAULT_SUMMARY or None))
         self.c.commit()
         return self.get(chat_id)
 
@@ -92,9 +111,14 @@ class DB:
             self.c.execute(f"DELETE FROM {t} WHERE chat_id=?", (chat_id,))
         self.c.commit()
 
+    def move_chat(self, old_id: int, new_id: int):
+        """Группа стала супергруппой и получила новый chat_id — переносим всё на него."""
+        for t in ("subs", "overrides", "sent"):
+            self.c.execute(f"UPDATE OR REPLACE {t} SET chat_id=? WHERE chat_id=?", (new_id, old_id))
+        self.c.commit()
+
     def all(self) -> list[Sub]:
-        return [Sub(*r) for r in self.c.execute(
-            "SELECT chat_id,title,oblast,raion,power,queue,remind FROM subs")]
+        return [Sub(*r) for r in self.c.execute(f"SELECT {SUB_COLS} FROM subs")]
 
     def used_sources(self) -> set[str]:
         return {r[0] for r in self.c.execute(
@@ -172,6 +196,36 @@ class DB:
         self.c.execute("DELETE FROM sent WHERE day<?", (before_day,))
         self.c.execute("DELETE FROM overrides WHERE day<?", (before_day,))
         self.c.execute("DELETE FROM sched WHERE day<?", (before_day,))
+        self.c.commit()
+
+    # ----- журнал тревог (для статистики и утренней сводки) -----
+    def alerts_sync(self, current: dict[str, dict], ts: float, gone_at: float | None = None):
+        """Сверить журнал со снимком активных тревог: новые — открыть, пропавшие — закрыть.
+        После перезапуска бота так же: тревоги, закончившиеся, пока бот лежал, закрываются
+        моментом gone_at (последний удачный опрос до перезапуска)."""
+        open_keys = {k for (k,) in self.c.execute("SELECT key FROM alert_log WHERE end_ts IS NULL")}
+        for k in open_keys - current.keys():
+            self.c.execute("UPDATE alert_log SET end_ts=? WHERE key=? AND end_ts IS NULL",
+                           (gone_at or ts, k))
+        for k in current.keys() - open_keys:
+            a = current[k]
+            data = {f: a.get(f) for f in ("location_title", "location_oblast", "location_type",
+                                          "location_raion", "alert_type")}
+            self.c.execute("INSERT INTO alert_log(key,data,start_ts) VALUES(?,?,?)",
+                           (k, json.dumps(data, ensure_ascii=False), ts))
+        self.c.execute("INSERT OR REPLACE INTO settings VALUES('alerts_seen', ?)", (str(ts),))
+        self.c.commit()
+
+    def alert_rows(self, since: float) -> list[tuple[dict, float, float | None]]:
+        return [(json.loads(d), s, e) for d, s, e in self.c.execute(
+            "SELECT data,start_ts,end_ts FROM alert_log WHERE end_ts IS NULL OR end_ts>?", (since,))]
+
+    def alert_log_since(self) -> float | None:
+        r = self.c.execute("SELECT MIN(start_ts) FROM alert_log").fetchone()
+        return r[0] if r else None
+
+    def alert_log_cleanup(self, before: float):
+        self.c.execute("DELETE FROM alert_log WHERE end_ts IS NOT NULL AND end_ts<?", (before,))
         self.c.commit()
 
     def commit(self):
