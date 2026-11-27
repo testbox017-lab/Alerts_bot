@@ -162,3 +162,20 @@ def test_move_chat_to_supergroup():
     assert db.get(-100).oblast == "Чернігівська область"
     assert db.overrides(-100) == {"2026-11-27": [["06:00", "09:00"]]}
     assert db.was_sent(-100, "off|x")
+
+
+def test_parse_svitlyachok():
+    d = {"region": "chernivtsi", "updated": "2026-11-27T15:34:01+02:00", "checked": "2026-11-27T16:34:01+02:00",
+         "days": {"2026-11-27": {
+             "1": "1" * 22 + "0000003" + "1" * 19,
+             "12": "0" * 4 + "1" * 44,
+             "bad": "101",
+         }}}
+    res = power.parse_svitlyachok(d)
+    # 0 — отключение, 3 — «можливе» (POSSIBLE_AS_OFF=1 по умолчанию) -> 11:00–14:30
+    assert res["1"]["2026-11-27"] == [["11:00", "14:30"]]
+    assert res["12"]["2026-11-27"] == [["00:00", "02:00"]]
+    assert "bad" not in res
+    assert sorted(res, key=power.queue_sort_key) == ["1", "12"]
+    with pytest.raises(ValueError):
+        power.parse_svitlyachok({"days": {}})

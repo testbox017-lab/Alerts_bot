@@ -31,7 +31,8 @@ power_ok_at: dict[str, datetime] = {}
 power_updated_at: dict[str, datetime | None] = {}
 power_problem: dict[str, str | None] = {}
 # официальные страницы графиков, на которые отправляем при проблемах с источником
-POWER_SITES = {"chernihiv": "https://chernihivoblenergo.com.ua/blackouts"}
+POWER_SITES = {"chernihiv": "https://chernihivoblenergo.com.ua/blackouts",
+               "chernivtsi": "https://oblenergo.cv.ua/shutdowns/"}
 
 HELP = (
     "Я надсилаю повітряні тривоги по твоїх областях (до 5) або районах і нагадую про "
