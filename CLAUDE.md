@@ -22,11 +22,12 @@ bot/
   config.py       все настройки из переменных окружения (.env)
   alerts.py       цепочка источников тревог, fallback, фильтры по области/району, форматирование
   ukrainealarm.py клиент API ukrainealarm (и зеркала siren.pp.ua), конвертация в формат alerts.in.ua
+  digest.py       утренняя сводка, тихие часы, статистика тревог (чистые функции)
   compare.py      режим ALERTS_COMPARE: кто из источников раньше сообщает о тревоге, /compare
   power.py        парсеры графиков (GPV/OE, svitlo, Миколаїв, Koly Ye), интервалы, напоминания, «устарел ли график»
   regions.py      список областей и карта «поставщик графика → URL источника»
   sender.py       параллельная рассылка с ограничением скорости и обработкой 429
-  db.py           SQLite: subs, overrides (ручные графики /svet), sched (кэш), settings, sent
+  db.py           SQLite: subs, overrides (ручные графики /svet), sched (кэш), settings, sent, alert_log (журнал тревог)
 tests/            pytest, без сети
 tools/loadtest.py нагрузочный тест с фейковым Bot API на 127.0.0.1
 Dockerfile, docker-compose.yml, .github/workflows/deploy.yml
@@ -37,7 +38,7 @@ README.md (рус.), README.en.md (англ.) — пользовательска
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest -q          # 39 тестов, ~1 с, сеть не нужна
+python -m pytest -q          # 48 тестов, ~1 с, сеть не нужна
 cp .env.example .env         # заполнить BOT_TOKEN и ключи
 python -m bot                # локально
 docker compose up -d --build # в Docker
@@ -53,7 +54,7 @@ Python 3.12, aiogram 3.13, aiohttp. Часовой пояс — Europe/Kyiv (`co
 
 `BOT_TOKEN`, `ALERTS_TOKEN` (alerts.in.ua), `UKRAINEALARM_TOKEN`, `ALERTS_SOURCE`, `ADMIN_IDS`,
 `ALERTS_POLL_SECONDS`, `UKRAINEALARM_POLL_SECONDS`, `ALERTS_COMPARE`, `ALERTS_COMPARE_SECONDS`,
-`POWER_POLL_SECONDS`, `POWER_UNREACHABLE_MIN`, `POWER_STALE_HOURS`, `DEFAULT_REMIND`, `POSSIBLE_AS_OFF`,
+`POWER_POLL_SECONDS`, `POWER_UNREACHABLE_MIN`, `POWER_STALE_HOURS`, `DEFAULT_REMIND`, `DEFAULT_SUMMARY`, `ALERT_LOG_DAYS`, `POSSIBLE_AS_OFF`,
 `SEND_RATE`, `SEND_CONCURRENCY`, `SEND_ATTEMPTS`, `DB_PATH`. Описание — в `bot/config.py` и `.env.example`.
 
 **После изменения `.env` на сервере:** `cd ~/alerts_bot && docker compose up -d --force-recreate` (простой `restart` не перечитывает `.env`).
@@ -100,6 +101,8 @@ Python 3.12, aiogram 3.13, aiohttp. Часовой пояс — Europe/Kyiv (`co
 - Черновицкая (только HTML на oblenergo.cv.ua) и Херсонская — источника нет, только ручной `/svet`. Донецкая, Луганская, Крым — графиков нет.
 - Напрямую Черниговоблэнерго подключить нельзя (нет открытого API).
 - **Userbot не делаем** (нужен вход по номеру телефона на сервере, лишний риск). Файл `userbot.py` в папке проекта — устаревший, в репозитории его нет.
+
+**Сводка, тихие часы, статистика (PR #24).** Утренняя сводка по умолчанию 07:00 (`DEFAULT_SUMMARY`), при обновлении включается и старым чатам; шлётся только в течение часа после времени (включили позже — придёт завтра). Тихие часы: всё без звука, кроме начала тревоги (`Loud` в `main.py`); відбій тоже тихий. Статистика — из таблицы `alert_log`, которую ведёт `alerts_loop`; история только с момента обновления, пересекающиеся тревоги (область + район) считаются одной.
 
 **Рассылка.** Реальный потолок — лимит Telegram ~30 сообщений/с на бота. Старая последовательная рассылка: 1000 чатов ≈ 54 с при задержке 50 мс и 154 с при 150 мс, и опрос тревог на это время вставал. Сейчас (#22): параллельно, `SEND_RATE=25`/с, при 429 пауза + замедление + повтор; 1000 чатов ≈ 42 с, 5000 ≈ 205 с независимо от задержки, опрос не блокируется.
 
