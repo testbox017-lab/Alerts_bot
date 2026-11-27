@@ -146,6 +146,32 @@ def _koly_stamp(d: dict, key: str) -> datetime | None:
         return None
 
 
+# ---------- Світлячок (ABovsh/svitlyachok-data): Чернівецька область, групи 1–12 ----------
+SVITLYACHOK_URL = "https://raw.githubusercontent.com/ABovsh/svitlyachok-data/main/data/{}.json"
+
+
+def parse_svitlyachok(d: dict) -> dict[str, dict[str, list[Interval]]]:
+    """{"days": {day: {group: "48 символів"}}} -> {queue: {day: intervals}}.
+
+    Символ на кожні півгодини від опівночі: 1 — світло є, 0 — відключення, 3 — можливе заживлення
+    (рахуємо як відключення, якщо POSSIBLE_AS_OFF).
+    """
+    days = d.get("days") if isinstance(d, dict) else None
+    if not isinstance(days, dict):
+        raise ValueError("svitlyachok: no days")
+    possible = int(config.POSSIBLE_AS_OFF)
+    res: dict[str, dict[str, list[Interval]]] = {}
+    for day, groups in days.items():
+        for q, line in (groups or {}).items():
+            if not isinstance(line, str) or len(line) != 48:
+                continue
+            halves = [1 if c == "0" else possible if c == "3" else 0 for c in line]
+            res.setdefault(str(q), {})[str(day)] = halves_to_intervals(halves)
+    if not res:
+        raise ValueError("svitlyachok: no groups")
+    return res
+
+
 async def _get_json(session: aiohttp.ClientSession, url: str):
     async with session.get(url, headers=_HEADERS, timeout=aiohttp.ClientTimeout(total=20)) as r:
         r.raise_for_status()
@@ -156,7 +182,8 @@ async def fetch_source(session: aiohttp.ClientSession, url: str):
     """-> (расписание, текст времени обновления, lastUpdated как datetime или None).
 
     url — либо ссылка на JSON в формате OE_OUTAGE_DATA/outage-data-ua,
-    либо "svitlo:<cpu>" (svitlo.live), "koly:<id>" (Koly Ye), "mykolaiv:" (API Миколаївобленерго).
+    либо "svitlo:<cpu>" (svitlo.live), "koly:<id>" (Koly Ye), "svitlyachok:<id>" (Світлячок),
+    "mykolaiv:" (API Миколаївобленерго).
     У svitlo и mykolaiv нет поля lastUpdated, поэтому время обновления — момент загрузки.
     """
     now_txt = f"{datetime.now(TZ):%d.%m.%Y %H:%M}"
@@ -167,6 +194,11 @@ async def fetch_source(session: aiohttp.ClientSession, url: str):
         upd = _koly_stamp(d, "updatedAt")
         # fetchedAt — когда сборщик последний раз сходил к облэнерго: по нему видно, что он жив
         return parse_koly(d), (f"{upd.astimezone(TZ):%d.%m.%Y %H:%M}" if upd else now_txt), _koly_stamp(d, "fetchedAt")
+    if url.startswith("svitlyachok:"):
+        d = await _get_json(session, SVITLYACHOK_URL.format(url.removeprefix("svitlyachok:")))
+        upd = _koly_stamp(d, "updated")
+        # checked — последнее удачное чтение сайта облэнерго (минимум раз в час)
+        return parse_svitlyachok(d), (f"{upd.astimezone(TZ):%d.%m.%Y %H:%M}" if upd else now_txt), _koly_stamp(d, "checked")
     if url == "mykolaiv:":
         queues = await _get_json(session, f"{MYKOLAIV_API}/outage-queue/by-type/3")
         series = await _get_json(session, f"{MYKOLAIV_API}/schedule/time-series")
