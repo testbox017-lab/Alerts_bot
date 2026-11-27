@@ -34,10 +34,6 @@ DB_PATH = Path(os.environ.get("DB_PATH", "data/bot.db"))
 ALERTS_POLL_SECONDS = int(os.environ.get("ALERTS_POLL_SECONDS", "30"))
 # ключ ukrainealarm пускает ~1 запрос в минуту: пока работаем с него, опрашиваем не чаще
 UKRAINEALARM_POLL_SECONDS = int(os.environ.get("UKRAINEALARM_POLL_SECONDS", "60"))
-# Сравнение alerts.in.ua и ukrainealarm (только лог, рассылка не меняется), см. bot/compare.py.
-# 60 с: ключ ukrainealarm отвечает 429 чаще ~1 запроса в минуту (проверено 2026-11-24 на OVH).
-ALERTS_COMPARE = os.environ.get("ALERTS_COMPARE", "0") == "1"
-ALERTS_COMPARE_SECONDS = int(os.environ.get("ALERTS_COMPARE_SECONDS", "60"))
 POWER_POLL_SECONDS = int(os.environ.get("POWER_POLL_SECONDS", "600"))
 # Предупреждать подписчиков, если график не грузится дольше N минут
 # или источник не обновлялся дольше N часов (обычно он обновляется хотя бы раз в сутки)

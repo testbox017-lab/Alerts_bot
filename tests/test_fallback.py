@@ -134,3 +134,14 @@ def test_db_settings():
     db.set_setting("alerts_first", "ukrainealarm")
     db.set_setting("alerts_first", "alertsinua")
     assert db.setting("alerts_first") == "alertsinua"
+
+
+def test_err_text_hides_token():
+    from types import SimpleNamespace
+
+    import aiohttp
+    info = SimpleNamespace(real_url="https://api.ukrainealarm.com/api/v3/alerts",
+                           headers={"Authorization": "SECRET"}, url="u", method="GET")
+    e = aiohttp.ClientResponseError(info, (), status=429, message="Too Many Requests")
+    assert "SECRET" not in alerts.err_text(e)
+    assert alerts.err_text(e) == "HTTP 429 Too Many Requests"
