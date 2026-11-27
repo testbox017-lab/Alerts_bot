@@ -26,6 +26,7 @@ bot/
   power.py        парсеры графиков (GPV/OE, svitlo, Миколаїв, Koly Ye), интервалы, напоминания, «устарел ли график»
   regions.py      список областей и карта «поставщик графика → URL источника»
   sender.py       параллельная рассылка с ограничением скорости и обработкой 429
+  backup.py       ежедневная копия базы в data/backups + файл владельцу в Telegram, /backup
   db.py           SQLite: subs, overrides (ручные графики /svet), sched (кэш), settings, sent
 tests/            pytest, без сети
 tools/loadtest.py нагрузочный тест с фейковым Bot API на 127.0.0.1
@@ -37,7 +38,7 @@ README.md (рус.), README.en.md (англ.) — пользовательска
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest -q          # 39 тестов, ~1 с, сеть не нужна
+python -m pytest -q          # 42 теста, ~1 с, сеть не нужна
 cp .env.example .env         # заполнить BOT_TOKEN и ключи
 python -m bot                # локально
 docker compose up -d --build # в Docker
@@ -54,7 +55,7 @@ Python 3.12, aiogram 3.13, aiohttp. Часовой пояс — Europe/Kyiv (`co
 `BOT_TOKEN`, `ALERTS_TOKEN` (alerts.in.ua), `UKRAINEALARM_TOKEN`, `ALERTS_SOURCE`, `ADMIN_IDS`,
 `ALERTS_POLL_SECONDS`, `UKRAINEALARM_POLL_SECONDS`, `ALERTS_COMPARE`, `ALERTS_COMPARE_SECONDS`,
 `POWER_POLL_SECONDS`, `POWER_UNREACHABLE_MIN`, `POWER_STALE_HOURS`, `DEFAULT_REMIND`, `POSSIBLE_AS_OFF`,
-`SEND_RATE`, `SEND_CONCURRENCY`, `SEND_ATTEMPTS`, `DB_PATH`. Описание — в `bot/config.py` и `.env.example`.
+`SEND_RATE`, `SEND_CONCURRENCY`, `SEND_ATTEMPTS`, `DB_PATH`, `BACKUP_HOUR`, `BACKUP_KEEP`, `BACKUP_TELEGRAM`. Описание — в `bot/config.py` и `.env.example`.
 
 **После изменения `.env` на сервере:** `cd ~/alerts_bot && docker compose up -d --force-recreate` (простой `restart` не перечитывает `.env`).
 
@@ -65,7 +66,7 @@ Python 3.12, aiogram 3.13, aiohttp. Часовой пояс — Europe/Kyiv (`co
 - IP-адреса и ключи в репозиторий не кладём (репозиторий публичный).
 - Доступ к серверам — с ПК Dmitry (Windows, папка `D:\Program\prg_py\Alerts_bot`, ключ `~/.ssh/id_ed25519`). На Windows следить за CRLF и кавычками в командах через ssh.
 
-**Автодеплой:** push в `main` → GitHub Actions (`deploy.yml`): pytest → сборка образа `ghcr.io/testbox017-lab/alerts_bot` → по SSH копирует `docker-compose.yml` в `~/alerts_bot`, `docker compose pull && up -d`. Секреты репозитория: `SSH_HOST`, `SSH_USER`, `SSH_KEY` (`SSH_PORT` по желанию). Без секретов деплой пропускается с предупреждением. На PR выполняются только тесты и сборка.
+**Автодеплой:** push в `main` → GitHub Actions (`deploy.yml`): pytest → сборка образа `ghcr.io/testbox017-lab/alerts_bot` → по SSH копирует `docker-compose.yml` в `~/alerts_bot`, `docker compose pull && up -d`. Секреты репозитория: `SSH_HOST`, `SSH_USER`, `SSH_KEY` (`SSH_PORT` по желанию), `DEPLOY_HOSTNAME` (по желанию: вывод `hostname` на OVH — деплой на другой сервер падает с ошибкой). В логе шага Pull & restart печатается список контейнеров сервера — по нему видно, куда ушёл деплой. Без секретов деплой пропускается с предупреждением. На PR выполняются только тесты и сборка.
 
 **Порядок работы:** ветка → PR → Dmitry проверяет и пишет «мержи» → merge в `main` → автодеплой. Не пушить в `main` напрямую.
 
@@ -84,6 +85,8 @@ Python 3.12, aiogram 3.13, aiohttp. Часовой пояс — Europe/Kyiv (`co
 - #18–#20 — графики для Винницкой, Николаевской, Сумской, Волынской, Кировоградской областей.
 - #21 — кнопка ⚙ → 📡 Джерело тривог / `/source`: смена первого источника на лету, только владельцу.
 - #22 (смержен 2026-11-26) — параллельная рассылка с ограничением скорости (`bot/sender.py`) и `tools/loadtest.py`.
+- #23 — этот CLAUDE.md.
+- #24 — ежедневный бэкап базы (`bot/backup.py`), `/backup`, проверка сервера при деплое.
 
 ## Принятые решения и почему
 

@@ -50,3 +50,10 @@ POSSIBLE_AS_OFF = os.environ.get("POSSIBLE_AS_OFF", "1") == "1"
 SEND_RATE = float(os.environ.get("SEND_RATE", "25"))
 SEND_CONCURRENCY = int(os.environ.get("SEND_CONCURRENCY", "20"))
 SEND_ATTEMPTS = int(os.environ.get("SEND_ATTEMPTS", "5"))
+
+# Резервная копия базы (bot/backup.py): раз в сутки в BACKUP_HOUR (по Киеву) копия в
+# data/backups (хранится BACKUP_KEEP последних) и файл владельцу бота в Telegram
+# (ADMIN_IDS или тот, кто первым отправил /source). BACKUP_HOUR=-1 — выключить.
+BACKUP_HOUR = int(os.environ.get("BACKUP_HOUR", "4"))
+BACKUP_KEEP = int(os.environ.get("BACKUP_KEEP", "14"))
+BACKUP_TELEGRAM = os.environ.get("BACKUP_TELEGRAM", "1") == "1"
