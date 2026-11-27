@@ -79,6 +79,12 @@ jobs:
           port: ${{ secrets.SSH_PORT || 22 }}
           script: |
             set -e
+            # защита от деплоя не на тот сервер: секрет DEPLOY_HOSTNAME = вывод `hostname` на OVH
+            want="${{ secrets.DEPLOY_HOSTNAME }}"
+            if [ -n "$want" ] && [ "$(hostname)" != "$want" ]; then
+              echo "::error::Не тот сервер: hostname не совпадает с DEPLOY_HOSTNAME"; exit 1
+            fi
+            echo "Контейнеры на сервере:"; docker ps --format '  {{.Names}}  ({{.Status}})'
             cd ~/alerts_bot
             test -f .env || { echo "Нет ~/alerts_bot/.env на сервере"; exit 1; }
             mkdir -p data && chown 1000:1000 data 2>/dev/null || sudo -n chown 1000:1000 data || true

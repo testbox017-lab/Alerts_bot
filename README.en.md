@@ -94,6 +94,9 @@ While the secrets are not set, the deploy step is skipped with a warning.
 | `ALERTS_POLL_SECONDS` | 30 | how often to poll the alert source |
 | `POWER_POLL_SECONDS` | 600 | how often to refresh power schedules |
 | `DB_PATH` | data/bot.db | SQLite database path |
+| `BACKUP_HOUR` | 4 | daily DB backup hour (Kyiv), `-1` disables |
+| `BACKUP_KEEP` | 14 | how many backups to keep in `data/backups` |
+| `BACKUP_TELEGRAM` | 1 | `1` also sends the backup file to the bot owner |
 | `DEFAULT_REMIND` | 30 | default reminder lead time, minutes |
 | `DEFAULT_SUMMARY` | 07:00 | morning summary time for new chats (and existing ones on first start after the update); empty = off |
 | `ALERT_LOG_DAYS` | 31 | how many days of alert history to keep for `/stats` |
@@ -110,3 +113,19 @@ docker compose logs -f
 Without Docker: `pip install -r requirements-dev.txt && python -m pytest && python -m bot`.
 
 Data (subscribers, schedule cache) is stored in SQLite at `data/bot.db`.
+
+### Database backup
+
+Once a day at 04:00 Kyiv time (`BACKUP_HOUR`) the bot copies the database to `data/backups/bot-YYYY-MM-DD.db`
+(keeps the last `BACKUP_KEEP=14`) and sends the file to the bot owner in a private chat
+(owner = `ADMIN_IDS`, or the first user who sent `/source`). This way chat settings survive
+even if the whole server is lost. `/backup` in a private chat gets a copy right away (owner only).
+`BACKUP_TELEGRAM=0` keeps copies on disk only, `BACKUP_HOUR=-1` disables backups.
+
+Restore: stop the bot, put the file in place of the database, start again:
+
+```bash
+docker compose stop
+cp bot-2026-11-27.db data/bot.db && chown 1000:1000 data/bot.db
+docker compose up -d
+```

@@ -12,9 +12,9 @@ from aiogram.exceptions import (TelegramBadRequest, TelegramForbiddenError, Tele
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import (BotCommand, CallbackQuery, InlineKeyboardButton,
                            InlineKeyboardMarkup, KeyboardButton, Message,
-                           ReplyKeyboardMarkup)
+                           ReplyKeyboardMarkup, FSInputFile)
 
-from . import alerts, config, digest, power, sender
+from . import alerts, backup, config, digest, power, sender
 from .config import TZ
 from .db import DB, Sub
 from .regions import OBLASTS, POWER_SOURCES, sources_for_oblast
@@ -163,6 +163,13 @@ def settings_kb(owner: bool = False) -> InlineKeyboardMarkup:
 
 
 # ---------- первый источник тревог (общий для всех чатов, меняет только владелец) ----------
+def owner_ids() -> list[int]:
+    if config.ADMIN_IDS:
+        return sorted(config.ADMIN_IDS)
+    o = db.setting("owner")
+    return [int(o)] if o else []
+
+
 def is_owner(user_id: int) -> bool:
     if config.ADMIN_IDS:
         return user_id in config.ADMIN_IDS
@@ -678,6 +685,47 @@ async def cb_source(c: CallbackQuery):
     await c.answer()
 
 
+# ---------- резервная копия базы ----------
+def backup_dir():
+    return config.DB_PATH.parent / "backups"
+
+
+async def send_backup(chat_id: int, path, caption: str):
+    await bot.send_document(chat_id, FSInputFile(path), caption=caption, disable_notification=True)
+
+
+async def do_backup(to: list[int]):
+    path = backup.make_backup(db.c, backup_dir(), datetime.now(TZ), config.BACKUP_KEEP)
+    caption = f"💾 Копія бази {path.name} ({backup.summary(db.c)})"
+    log.info("backup saved: %s", path)
+    for uid in to:
+        try:
+            await send_backup(uid, path, caption)
+        except Exception as e:   # владелец не писал боту в личку и т.п. — копия на диске всё равно есть
+            log.warning("backup not sent to %s: %s", uid, e)
+    return path
+
+
+async def backup_loop():
+    if config.BACKUP_HOUR < 0:
+        return
+    while True:
+        now = datetime.now(TZ)
+        await asyncio.sleep((backup.next_run(now, config.BACKUP_HOUR) - now).total_seconds())
+        try:
+            await do_backup(owner_ids() if config.BACKUP_TELEGRAM else [])
+        except Exception:
+            log.exception("backup failed")
+        await asyncio.sleep(60)
+
+
+@dp.message(Command("backup"))
+async def cmd_backup(m: Message):
+    if m.chat.type != "private" or not is_owner(m.from_user.id):
+        return await reply(m, "Копію бази може отримати лише власник бота в особистих повідомленнях.")
+    await do_backup([m.chat.id])
+
+
 @dp.message(Command("raion"))
 async def cmd_raion(m: Message, command: CommandObject):
     sub = db.get(m.chat.id)
@@ -975,7 +1023,7 @@ async def main():
         BotCommand(command="settings", description="Налаштування"),
         BotCommand(command="help", description="Довідка"),
     ])
-    loops = [power_loop, reminder_loop, summary_loop, alerts_loop]
+    loops = [power_loop, reminder_loop, summary_loop, alerts_loop, backup_loop]
     tasks = [asyncio.create_task(supervise(f)) for f in loops]
     try:
         await dp.start_polling(bot)
