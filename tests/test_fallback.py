@@ -88,6 +88,9 @@ def test_last_source_just_raises(env, monkeypatch):
     ({"ALERTS_TOKEN": "x", "UKRAINEALARM_TOKEN": "y"}, ["alertsinua", "ukrainealarm", "mirror"]),
     ({"ALERTS_TOKEN": "x", "UKRAINEALARM_TOKEN": "y", "ALERTS_SOURCE": "ukrainealarm"},
      ["ukrainealarm", "alertsinua", "mirror"]),
+    # опечатка или источник без ключа в ALERTS_SOURCE — порядок по умолчанию
+    ({"ALERTS_TOKEN": "x", "ALERTS_SOURCE": "ukrainealram"}, ["alertsinua", "mirror"]),
+    ({"ALERTS_SOURCE": "alertsinua"}, ["mirror"]),
 ])
 def test_chain_from_env(monkeypatch, env_vars, chain):
     for k in ("ALERTS_TOKEN", "UKRAINEALARM_TOKEN", "ALERTS_SOURCE"):
@@ -131,3 +134,14 @@ def test_db_settings():
     db.set_setting("alerts_first", "ukrainealarm")
     db.set_setting("alerts_first", "alertsinua")
     assert db.setting("alerts_first") == "alertsinua"
+
+
+def test_err_text_hides_token():
+    from types import SimpleNamespace
+
+    import aiohttp
+    info = SimpleNamespace(real_url="https://api.ukrainealarm.com/api/v3/alerts",
+                           headers={"Authorization": "SECRET"}, url="u", method="GET")
+    e = aiohttp.ClientResponseError(info, (), status=429, message="Too Many Requests")
+    assert "SECRET" not in alerts.err_text(e)
+    assert alerts.err_text(e) == "HTTP 429 Too Many Requests"

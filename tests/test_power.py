@@ -1,4 +1,3 @@
-import json
 from datetime import datetime
 
 import pytest
@@ -31,6 +30,9 @@ def test_parse_intervals():
     assert power.parse_intervals(["22-24"]) == [["22:00", "24:00"]]
     with pytest.raises(ValueError):
         power.parse_intervals(["25-26"])
+    for bad in ("18-06", "10-10"):   # конец раньше начала — через полночь не принимаем
+        with pytest.raises(ValueError):
+            power.parse_intervals([bad])
 
 
 def test_reminders_merge_midnight():
@@ -105,21 +107,6 @@ def test_fmt_health():
     assert power.fmt_health(None, "X", None, None).startswith("✅")
 
 
-def test_parse_svitlo_region():
-    slots = {f"{i // 2:02d}:{30 * (i % 2):02d}": 1 for i in range(48)}
-    slots.update({"18:00": 2, "18:30": 2, "19:00": 2, "23:30": 2})
-    body = {"regions": [
-        {"cpu": "sumska-oblast", "schedule": {"3.2": {"2026-11-25": slots, "2026-11-26": {}}}},
-        {"cpu": "chernivetska-oblast", "schedule": {}},
-    ]}
-    res = power.parse_svitlo({"body": json.dumps(body)}, "sumska-oblast")
-    assert res["3.2"] == {"2026-11-25": [["18:00", "19:30"], ["23:30", "24:00"]]}
-    assert res["1.1"] == {} and len(res) == 12
-    assert power.parse_svitlo(body, "chernivetska-oblast") == {str(i): {} for i in range(1, 13)}
-    with pytest.raises(ValueError):
-        power.parse_svitlo(body, "volynska-oblast")
-
-
 def test_parse_mykolaiv():
     queues = [{"id": 14, "name": "1.1"}, {"id": 15, "name": "1.2"}, {"id": 99, "name": "Місто"}]
     series = [{"id": i + 1, "start": f"{i // 2:02d}:{30 * (i % 2):02d}:00"} for i in range(48)]
@@ -152,3 +139,43 @@ def test_parse_koly():
     assert res["1.2"]["2026-11-25"] == [["22:00", "24:00"]]  # POSSIBLE_AS_OFF=1 по умолчанию
     assert res["2.1"]["2026-11-25"] == []
     assert res["6.2"] == {} and len(res) == 12
+
+
+def test_stamps_without_timezone_are_utc():
+    from datetime import timezone
+    # без пояса раньше получался naive datetime, и health_problem падал с TypeError
+    dt = power.last_updated({"lastUpdated": "2026-11-21T22:05:00"})
+    assert dt == datetime(2026, 11, 21, 22, 5, tzinfo=timezone.utc)
+    assert power.health_problem(datetime.now(TZ), datetime.now(TZ), dt) == "stale"
+    assert power._koly_stamp({"fetchedAt": "2026-11-21T22:05:00"}, "fetchedAt").tzinfo is not None
+    assert power._koly_stamp({"fetchedAt": None}, "fetchedAt") is None
+
+
+def test_move_chat_to_supergroup():
+    db = DB(":memory:")
+    db.ensure(-1, "group")
+    db.update(-1, oblast="Чернігівська область", queue="1.1")
+    db.override_put(-1, "2026-11-27", [["06:00", "09:00"]])
+    db.mark_sent(-1, "off|x", "2026-11-27")
+    db.move_chat(-1, -100)
+    assert db.get(-1) is None
+    assert db.get(-100).oblast == "Чернігівська область"
+    assert db.overrides(-100) == {"2026-11-27": [["06:00", "09:00"]]}
+    assert db.was_sent(-100, "off|x")
+
+
+def test_parse_svitlyachok():
+    d = {"region": "chernivtsi", "updated": "2026-11-27T15:34:01+02:00", "checked": "2026-11-27T16:34:01+02:00",
+         "days": {"2026-11-27": {
+             "1": "1" * 22 + "0000003" + "1" * 19,
+             "12": "0" * 4 + "1" * 44,
+             "bad": "101",
+         }}}
+    res = power.parse_svitlyachok(d)
+    # 0 — отключение, 3 — «можливе» (POSSIBLE_AS_OFF=1 по умолчанию) -> 11:00–14:30
+    assert res["1"]["2026-11-27"] == [["11:00", "14:30"]]
+    assert res["12"]["2026-11-27"] == [["00:00", "02:00"]]
+    assert "bad" not in res
+    assert sorted(res, key=power.queue_sort_key) == ["1", "12"]
+    with pytest.raises(ValueError):
+        power.parse_svitlyachok({"days": {}})

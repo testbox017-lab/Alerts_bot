@@ -5,7 +5,7 @@
 Telegram-бот для себя, семьи или группы:
 
 - 🚨 **воздушные тревоги** по выбранным областям (до 5, например где живут родные; можно сузить до районов/громад) — источник: API приложения «Повітряна тривога» ([ukrainealarm.com](https://api.ukrainealarm.com)) или [alerts.in.ua](https://alerts.in.ua);
-- 💡 **графики отключений света** по вашей очереди с напоминанием за N минут до отключения и включения. Графики берутся из открытых сборщиков [OE_OUTAGE_DATA](https://github.com/yaroslav2901/OE_OUTAGE_DATA) и [outage-data-ua](https://github.com/Baskerville42/outage-data-ua), для Винницкой области — [gpv-voe-vinnytsia](https://github.com/vn-progr/gpv-voe-vinnytsia), для Николаевской — официальный API [off.energy.mk.ua](https://off.energy.mk.ua), для Сумской, Волынской и Кировоградской — сборщик [Koly Ye](https://github.com/vkardin/koly). Для Херсонской и Черновицкой областей открытых источников пока нет.
+- 💡 **графики отключений света** по вашей очереди с напоминанием за N минут до отключения и включения. Графики берутся из открытых сборщиков [OE_OUTAGE_DATA](https://github.com/yaroslav2901/OE_OUTAGE_DATA) и [outage-data-ua](https://github.com/Baskerville42/outage-data-ua), для Винницкой области — [gpv-voe-vinnytsia](https://github.com/vn-progr/gpv-voe-vinnytsia), для Николаевской — официальный API [off.energy.mk.ua](https://off.energy.mk.ua), для Сумской, Волынской и Кировоградской — сборщик [Koly Ye](https://github.com/vkardin/koly), для Черновицкой — сборщик [svitlyachok-data](https://github.com/ABovsh/svitlyachok-data) (группы 1–12, с сайта oblenergo.cv.ua). Для Херсонской области открытого источника нет: Херсонобленерго показывает график только в личном кабинете.
 
 Каждый чат (личка или группа) настраивает свои области (до 5) и очередь кнопками через `/start`. Очередей можно отметить до 5 (например, дом и дача): график и напоминания приходят по каждой отдельно.
 
@@ -54,7 +54,7 @@ nano .env   # вставить содержимое .env.example и заполн
   - `ALERTS_TOKEN` — [devs.alerts.in.ua](https://devs.alerts.in.ua).
   Поставить источник первым в цепочке: `ALERTS_SOURCE=ukrainealarm|alertsinua|mirror`. После изменения `.env`: `cd ~/alerts_bot && docker compose up -d --force-recreate`.
   Или прямо в боте, без перезапуска: ⚙️ Налаштування → 📡 Джерело тривог (кнопку видит только владелец бота). Выбор действует для всех чатов, хранится в `data/bot.db` и важнее `ALERTS_SOURCE`. Владелец — Telegram id из `ADMIN_IDS=123,456`; если не задано, им становится первый, кто напишет боту `/source` в личке. Когда бот работает с ukrainealarm.com по ключу, он опрашивает раз в минуту (`UKRAINEALARM_POLL_SECONDS=60`, лимит ключа), с остальных — раз в `ALERTS_POLL_SECONDS`.
-  Какой источник быстрее: `ALERTS_COMPARE=1` (нужны оба ключа). Бот раз в минуту (чаще ключ ukrainealarm не пускает) опрашивает alerts.in.ua и ukrainealarm одновременно и пишет в `data/compare.jsonl`, кто раньше сообщил о тревоге и відбої и на сколько секунд. Рассылка при этом не меняется. Отчёт — команда `/compare`.
+  Сравнение источников (2026-11-24/25, 26 ч) показало, что они почти одинаковые, поэтому первым стоит alerts.in.ua.
 
 Дальше всё делает GitHub Actions.
 

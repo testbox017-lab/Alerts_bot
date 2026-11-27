@@ -23,8 +23,7 @@ bot/
   alerts.py       цепочка источников тревог, fallback, фильтры по области/району, форматирование
   ukrainealarm.py клиент API ukrainealarm (и зеркала siren.pp.ua), конвертация в формат alerts.in.ua
   digest.py       утренняя сводка, тихие часы, статистика тревог (чистые функции)
-  compare.py      режим ALERTS_COMPARE: кто из источников раньше сообщает о тревоге, /compare
-  power.py        парсеры графиков (GPV/OE, svitlo, Миколаїв, Koly Ye), интервалы, напоминания, «устарел ли график»
+  power.py        парсеры графиков (GPV/OE, Миколаїв, Koly Ye, Світлячок), интервалы, напоминания, «устарел ли график»
   regions.py      список областей и карта «поставщик графика → URL источника»
   sender.py       параллельная рассылка с ограничением скорости и обработкой 429
   db.py           SQLite: subs, overrides (ручные графики /svet), sched (кэш), settings, sent, alert_log (журнал тревог)
@@ -38,7 +37,7 @@ README.md (рус.), README.en.md (англ.) — пользовательска
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest -q          # 48 тестов, ~1 с, сеть не нужна
+python -m pytest -q          # 53 теста, ~2 с, сеть не нужна
 cp .env.example .env         # заполнить BOT_TOKEN и ключи
 python -m bot                # локально
 docker compose up -d --build # в Docker
@@ -53,7 +52,7 @@ Python 3.12, aiogram 3.13, aiohttp. Часовой пояс — Europe/Kyiv (`co
 ### Переменные окружения (только имена, значения — в `.env` на сервере)
 
 `BOT_TOKEN`, `ALERTS_TOKEN` (alerts.in.ua), `UKRAINEALARM_TOKEN`, `ALERTS_SOURCE`, `ADMIN_IDS`,
-`ALERTS_POLL_SECONDS`, `UKRAINEALARM_POLL_SECONDS`, `ALERTS_COMPARE`, `ALERTS_COMPARE_SECONDS`,
+`ALERTS_POLL_SECONDS`, `UKRAINEALARM_POLL_SECONDS`,
 `POWER_POLL_SECONDS`, `POWER_UNREACHABLE_MIN`, `POWER_STALE_HOURS`, `DEFAULT_REMIND`, `DEFAULT_SUMMARY`, `ALERT_LOG_DAYS`, `POSSIBLE_AS_OFF`,
 `SEND_RATE`, `SEND_CONCURRENCY`, `SEND_ATTEMPTS`, `DB_PATH`. Описание — в `bot/config.py` и `.env.example`.
 
@@ -80,7 +79,7 @@ Python 3.12, aiogram 3.13, aiohttp. Часовой пояс — Europe/Kyiv (`co
 - #11 — предупреждение, если график не грузится или устарел.
 - #12 — постоянное меню-клавиатура (💡 Графік світла, 🚨 Тривоги зараз, ⚙️ Налаштування, ❓ Допомога).
 - #13 — до 5 областей для тревог на чат, общий фильтр `/raion`, график по главной области.
-- #14–#16 — режим сравнения источников `ALERTS_COMPARE` и `/compare`.
+- #14–#16 — режим сравнения источников `ALERTS_COMPARE` и `/compare` (удалён в #28 после того, как сравнение сделано).
 - #17 — `/status` берёт последний снимок тревог, без лишнего запроса к API.
 - #18–#20 — графики для Винницкой, Николаевской, Сумской, Волынской, Кировоградской областей.
 - #21 — кнопка ⚙ → 📡 Джерело тривог / `/source`: смена первого источника на лету, только владельцу.
@@ -98,7 +97,8 @@ Python 3.12, aiogram 3.13, aiohttp. Часовой пояс — Europe/Kyiv (`co
 **Графики света.** Только открытые машиночитаемые источники:
 - [OE_OUTAGE_DATA](https://github.com/yaroslav2901/OE_OUTAGE_DATA) (12 облэнерго) и [outage-data-ua](https://github.com/Baskerville42/outage-data-ua) (ДТЭК: Киев, Киевщина, Днепропетровщина, Одесщина);
 - Винницкая — gpv-voe-vinnytsia; Николаевская — официальный API off.energy.mk.ua (нужен браузерный User-Agent, иначе Cloudflare 403); Сумская, Волынская, Кировоградская — [Koly Ye](https://github.com/vkardin/koly) (`koly:<id>` в `regions.py`; Koly Ye — также запасной кандидат для других областей).
-- Черновицкая (только HTML на oblenergo.cv.ua) и Херсонская — источника нет, только ручной `/svet`. Донецкая, Луганская, Крым — графиков нет.
+- Черновицкая — [svitlyachok-data](https://github.com/ABovsh/svitlyachok-data) (`svitlyachok:chernivtsi`): сборщик на сервере в Украине каждые 15 мин читает oblenergo.cv.ua (GitHub-раннерам сайт отдаёт 403), 48 получасов на группу 1–12, `checked` обновляется минимум раз в час. Сам сайт из облака/OVH напрямую не парсим.
+- Херсонская — источника нет (Херсонобленерго показывает график только в личном кабинете; проверено ещё раз 2026-11-27), только ручной `/svet`. Донецкая, Луганская, Крым — графиков нет.
 - Напрямую Черниговоблэнерго подключить нельзя (нет открытого API).
 - **Userbot не делаем** (нужен вход по номеру телефона на сервере, лишний риск). Файл `userbot.py` в папке проекта — устаревший, в репозитории его нет.
 
@@ -110,7 +110,7 @@ Python 3.12, aiogram 3.13, aiohttp. Часовой пояс — Europe/Kyiv (`co
 
 - Проверить, что секрет `SSH_HOST` указывает на OVH, а не на старый Hetzner (открытый вопрос).
 - Утренняя сводка (например, в 7:00: график на день + тревоги за ночь) — предлагалось, Dmitry пока не просил.
-- Черновицкая (парсер HTML, есть пример в maxbanton/hass-chernivtsi-outages) и Херсонская — если появится источник.
+- Херсонская — если появится открытый источник. Запасной вариант для Черновицкой — свой парсер HTML oblenergo.cv.ua (пример в maxbanton/hass-chernivtsi-outages), если svitlyachok-data перестанет обновляться.
 - Волынская официально отдаёт только картинки — Koly Ye пока закрывает.
 
 ## Известные проблемы и подводные камни

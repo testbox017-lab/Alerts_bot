@@ -7,13 +7,14 @@ from datetime import datetime, timedelta
 
 import aiohttp
 from aiogram import Bot, Dispatcher, F
-from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter, TelegramBadRequest
+from aiogram.exceptions import (TelegramBadRequest, TelegramForbiddenError, TelegramMigrateToChat,
+                                TelegramNetworkError, TelegramRetryAfter, TelegramServerError)
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import (BotCommand, CallbackQuery, InlineKeyboardButton,
                            InlineKeyboardMarkup, KeyboardButton, Message,
                            ReplyKeyboardMarkup)
 
-from . import alerts, compare, config, digest, power, sender
+from . import alerts, config, digest, power, sender
 from .config import TZ
 from .db import DB, Sub
 from .regions import OBLASTS, POWER_SOURCES, sources_for_oblast
@@ -30,7 +31,8 @@ power_ok_at: dict[str, datetime] = {}
 power_updated_at: dict[str, datetime | None] = {}
 power_problem: dict[str, str | None] = {}
 # официальные страницы графиков, на которые отправляем при проблемах с источником
-POWER_SITES = {"chernihiv": "https://chernihivoblenergo.com.ua/blackouts"}
+POWER_SITES = {"chernihiv": "https://chernihivoblenergo.com.ua/blackouts",
+               "chernivtsi": "https://oblenergo.cv.ua/shutdowns/"}
 
 HELP = (
     "Я надсилаю повітряні тривоги по твоїх областях (до 5) або районах і нагадую про "
@@ -99,7 +101,7 @@ def silent_now(chat_id: int, text: str) -> bool:
 
 async def send(chat_id: int, text: str):
     silent = silent_now(chat_id, text)
-    for _ in range(config.SEND_ATTEMPTS):
+    for attempt in range(config.SEND_ATTEMPTS):
         await limiter.wait()
         try:
             await bot.send_message(chat_id, text, disable_web_page_preview=True,
@@ -109,6 +111,15 @@ async def send(chat_id: int, text: str):
             return
         except TelegramRetryAfter as e:
             limiter.pause(e.retry_after + 1)
+        except TelegramMigrateToChat as e:
+            # группа стала супергруппой: у неё новый id, переносим настройки и шлём туда
+            log.info("chat %s migrated to %s", chat_id, e.migrate_to_chat_id)
+            db.move_chat(chat_id, e.migrate_to_chat_id)
+            chat_id = e.migrate_to_chat_id
+        except (TelegramNetworkError, TelegramServerError) as e:
+            # сбой сети или 5xx у Telegram — не теряем тревогу, пробуем ещё раз
+            log.warning("send to %s failed (%s), retry", chat_id, e)
+            await asyncio.sleep(2 * (attempt + 1))
         except TelegramForbiddenError:
             log.info("chat %s blocked/kicked the bot, removing", chat_id)
             db.delete(chat_id)
@@ -116,7 +127,7 @@ async def send(chat_id: int, text: str):
         except Exception as e:  # noqa: BLE001
             log.warning("send to %s failed: %s", chat_id, e)
             return
-    log.warning("send to %s dropped after %s attempts (429): %s",
+    log.warning("send to %s dropped after %s attempts: %s",
                 chat_id, config.SEND_ATTEMPTS, text[:80])
 
 
@@ -229,7 +240,8 @@ def describe(sub: Sub) -> str:
     if sub.raion:
         lines.append(f"🔎 Фільтр районів: {sub.raion}")
     if sub.power:
-        lines.append(f"💡 Світло: {POWER_SOURCES[sub.power][0]}, {queue_label(sub)}")
+        name = POWER_SOURCES[sub.power][0] if sub.power in POWER_SOURCES else sub.power
+        lines.append(f"💡 Світло: {name}, {queue_label(sub)}")
     else:
         lines.append("💡 Графік світла: вимкнено")
     lines.append(f"⏰ Нагадування за {sub.remind} хв" if sub.remind else "⏰ Нагадування вимкнено")
@@ -361,10 +373,15 @@ async def refresh_source(src: str) -> dict[str, list[str]]:
 async def check_power_health(src: str):
     """Один раз предупреждаем подписчиков источника о проблеме и один раз — когда прошла."""
     problem = power.health_problem(datetime.now(TZ), power_ok_at[src], power_updated_at.get(src))
-    if problem == power_problem.get(src):
+    # состояние храним в БД: иначе после каждого деплоя бот снова рассылал бы
+    # то же предупреждение «график устарел»
+    was = power_problem.get(src, db.setting(f"power_problem:{src}") or None)
+    if problem == was or (problem is None and src not in power_updated_at):
+        # без единой удачной загрузки после запуска «всё снова хорошо» не объявляем
+        power_problem[src] = was
         return
-    was = power_problem.get(src)
     power_problem[src] = problem
+    db.set_setting(f"power_problem:{src}", problem or "")
     log.warning("power source %s health: %s -> %s", src, was, problem)
     text = power.fmt_health(problem, POWER_SOURCES[src][0], power_updated_at.get(src),
                             POWER_SITES.get(src))
@@ -374,7 +391,8 @@ async def check_power_health(src: str):
 async def power_loop():
     while True:
         db.cleanup((datetime.now(TZ).date() - timedelta(days=1)).isoformat())
-        for src in db.used_sources():
+        # источник могли убрать из regions.py, а в БД он остался — пропускаем
+        for src in db.used_sources() & POWER_SOURCES.keys():
             power_ok_at.setdefault(src, datetime.now(TZ))  # отсчёт «не грузится» — с запуска
             try:
                 changed = await refresh_source(src)
@@ -631,13 +649,6 @@ def quiet_prompt(sub: Sub) -> str:
 
 def quiet_kb() -> InlineKeyboardMarkup:
     return kb(chunk([(quiet_label(q), f"qt:{q}") for q in QUIET_CHOICES], 2) + [[("вимкнути", "qt:-")]])
-
-
-@dp.message(Command("compare"))
-async def cmd_compare(m: Message):
-    if not config.ALERTS_COMPARE:
-        return await reply(m, "Порівняння джерел вимкнено (ALERTS_COMPARE=1 у .env).")
-    await reply(m, compare.report_from_file())
 
 
 @dp.message(Command("source"))
@@ -927,6 +938,22 @@ async def fallback(m: Message):
 
 
 # ---------- запуск ----------
+async def supervise(loop_fn):
+    """Перезапускает фоновый цикл после неожиданной ошибки. Без этого задача
+    тихо умирает (её никто не ждёт), и, например, напоминания перестают
+    приходить до перезапуска контейнера."""
+    name = getattr(loop_fn, "__name__", "loop")
+    while True:
+        try:
+            await loop_fn()
+            return
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            log.exception("%s упал, перезапуск через 30 с", name)
+            await asyncio.sleep(30)
+
+
 async def main():
     global db, bot, http
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -949,9 +976,7 @@ async def main():
         BotCommand(command="help", description="Довідка"),
     ])
     loops = [power_loop, reminder_loop, summary_loop, alerts_loop]
-    tasks = [asyncio.create_task(f()) for f in loops]
-    if config.ALERTS_COMPARE:
-        tasks.append(asyncio.create_task(compare.compare_loop(http)))
+    tasks = [asyncio.create_task(supervise(f)) for f in loops]
     try:
         await dp.start_polling(bot)
     finally:
