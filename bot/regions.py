@@ -19,7 +19,7 @@ _VOE = "https://raw.githubusercontent.com/vn-progr/gpv-voe-vinnytsia/main/data/"
 
 # ключ -> (название для людей, URL JSON с графиком, область для подсказки)
 # Вместо URL может быть "svitlo:<регион>" (svitlo.live), "koly:<регион>" (vkardin/koly)
-# или "mykolaiv:" (API Миколаївобленерго).
+# "svitlyachok:<регион>" (ABovsh/svitlyachok-data) или "mykolaiv:" (API Миколаївобленерго).
 POWER_SOURCES: dict[str, tuple[str, str, str]] = {
     "kyiv": ("Київ (ДТЕК)", _DTEK + "kyiv.json", "м. Київ"),
     "kyiv-region": ("Київщина (ДТЕК)", _DTEK + "kyiv-region.json", "Київська область"),
@@ -42,6 +42,7 @@ POWER_SOURCES: dict[str, tuple[str, str, str]] = {
     "sumy": ("Сумиобленерго", "koly:sumy", "Сумська область"),
     "volyn": ("Волиньобленерго", "koly:volyn", "Волинська область"),
     "kirovohrad": ("Кіровоградобленерго", "koly:kirovohrad", "Кіровоградська область"),
+    "chernivtsi": ("Чернівціобленерго", "svitlyachok:chernivtsi", "Чернівецька область"),
 }
 
 
