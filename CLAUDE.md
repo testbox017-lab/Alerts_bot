@@ -22,7 +22,6 @@ bot/
   config.py       все настройки из переменных окружения (.env)
   alerts.py       цепочка источников тревог, fallback, фильтры по области/району, форматирование
   ukrainealarm.py клиент API ukrainealarm (и зеркала siren.pp.ua), конвертация в формат alerts.in.ua
-  compare.py      режим ALERTS_COMPARE: кто из источников раньше сообщает о тревоге, /compare
   power.py        парсеры графиков (GPV/OE, Миколаїв, Koly Ye, Світлячок), интервалы, напоминания, «устарел ли график»
   regions.py      список областей и карта «поставщик графика → URL источника»
   sender.py       параллельная рассылка с ограничением скорости и обработкой 429
@@ -37,7 +36,7 @@ README.md (рус.), README.en.md (англ.) — пользовательска
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest -q          # 46 тестов, ~2 с, сеть не нужна
+python -m pytest -q          # 44 теста, ~2 с, сеть не нужна
 cp .env.example .env         # заполнить BOT_TOKEN и ключи
 python -m bot                # локально
 docker compose up -d --build # в Docker
@@ -52,7 +51,7 @@ Python 3.12, aiogram 3.13, aiohttp. Часовой пояс — Europe/Kyiv (`co
 ### Переменные окружения (только имена, значения — в `.env` на сервере)
 
 `BOT_TOKEN`, `ALERTS_TOKEN` (alerts.in.ua), `UKRAINEALARM_TOKEN`, `ALERTS_SOURCE`, `ADMIN_IDS`,
-`ALERTS_POLL_SECONDS`, `UKRAINEALARM_POLL_SECONDS`, `ALERTS_COMPARE`, `ALERTS_COMPARE_SECONDS`,
+`ALERTS_POLL_SECONDS`, `UKRAINEALARM_POLL_SECONDS`,
 `POWER_POLL_SECONDS`, `POWER_UNREACHABLE_MIN`, `POWER_STALE_HOURS`, `DEFAULT_REMIND`, `POSSIBLE_AS_OFF`,
 `SEND_RATE`, `SEND_CONCURRENCY`, `SEND_ATTEMPTS`, `DB_PATH`. Описание — в `bot/config.py` и `.env.example`.
 
@@ -79,7 +78,7 @@ Python 3.12, aiogram 3.13, aiohttp. Часовой пояс — Europe/Kyiv (`co
 - #11 — предупреждение, если график не грузится или устарел.
 - #12 — постоянное меню-клавиатура (💡 Графік світла, 🚨 Тривоги зараз, ⚙️ Налаштування, ❓ Допомога).
 - #13 — до 5 областей для тревог на чат, общий фильтр `/raion`, график по главной области.
-- #14–#16 — режим сравнения источников `ALERTS_COMPARE` и `/compare`.
+- #14–#16 — режим сравнения источников `ALERTS_COMPARE` и `/compare` (удалён в #28 после того, как сравнение сделано).
 - #17 — `/status` берёт последний снимок тревог, без лишнего запроса к API.
 - #18–#20 — графики для Винницкой, Николаевской, Сумской, Волынской, Кировоградской областей.
 - #21 — кнопка ⚙ → 📡 Джерело тривог / `/source`: смена первого источника на лету, только владельцу.

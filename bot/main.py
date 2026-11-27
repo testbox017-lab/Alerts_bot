@@ -14,7 +14,7 @@ from aiogram.types import (BotCommand, CallbackQuery, InlineKeyboardButton,
                            InlineKeyboardMarkup, KeyboardButton, Message,
                            ReplyKeyboardMarkup)
 
-from . import alerts, compare, config, power, sender
+from . import alerts, config, power, sender
 from .config import TZ
 from .db import DB, Sub
 from .regions import OBLASTS, POWER_SOURCES, sources_for_oblast
@@ -288,10 +288,15 @@ async def refresh_source(src: str) -> dict[str, list[str]]:
 async def check_power_health(src: str):
     """Один раз предупреждаем подписчиков источника о проблеме и один раз — когда прошла."""
     problem = power.health_problem(datetime.now(TZ), power_ok_at[src], power_updated_at.get(src))
-    if problem == power_problem.get(src):
+    # состояние храним в БД: иначе после каждого деплоя бот снова рассылал бы
+    # то же предупреждение «график устарел»
+    was = power_problem.get(src, db.setting(f"power_problem:{src}") or None)
+    if problem == was or (problem is None and src not in power_updated_at):
+        # без единой удачной загрузки после запуска «всё снова хорошо» не объявляем
+        power_problem[src] = was
         return
-    was = power_problem.get(src)
     power_problem[src] = problem
+    db.set_setting(f"power_problem:{src}", problem or "")
     log.warning("power source %s health: %s -> %s", src, was, problem)
     text = power.fmt_health(problem, POWER_SOURCES[src][0], power_updated_at.get(src),
                             POWER_SITES.get(src))
@@ -463,13 +468,6 @@ async def cmd_status(m: Message):
             if alerts.matches(a, sub.oblast, sub.raion)]
     text = "\n".join(sorted(mine)) if mine else "🟢 Тривог немає"
     await reply(m, f"{text}\n\nДжерело: {alerts.source_name()}")
-
-
-@dp.message(Command("compare"))
-async def cmd_compare(m: Message):
-    if not config.ALERTS_COMPARE:
-        return await reply(m, "Порівняння джерел вимкнено (ALERTS_COMPARE=1 у .env).")
-    await reply(m, compare.report_from_file())
 
 
 @dp.message(Command("source"))
@@ -775,8 +773,6 @@ async def main():
     ])
     loops = [power_loop, reminder_loop, alerts_loop]
     tasks = [asyncio.create_task(supervise(f)) for f in loops]
-    if config.ALERTS_COMPARE:
-        tasks.append(asyncio.create_task(supervise(lambda: compare.compare_loop(http))))
     try:
         await dp.start_polling(bot)
     finally:

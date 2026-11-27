@@ -53,3 +53,37 @@ def test_supervise_restarts_crashed_loop(monkeypatch):
 
     asyncio.run(main.supervise(flaky))
     assert len(calls) == 3
+
+
+def test_stale_warning_not_repeated_after_restart(monkeypatch):
+    from datetime import datetime, timedelta
+
+    from bot.config import TZ
+    sent = []
+
+    async def fake_send_many(items):
+        sent.extend(items)
+
+    db = DB(":memory:")
+    db.ensure(1, "me")
+    db.update(1, power="chernihiv", queue="1.1")
+    monkeypatch.setattr(main, "db", db, raising=False)
+    monkeypatch.setattr(main, "send_many", fake_send_many)
+    old = datetime.now(TZ) - timedelta(days=3)
+
+    def run(updated_at, loaded=True):
+        main.power_problem.clear()          # как после перезапуска контейнера
+        main.power_updated_at.clear()
+        if loaded:
+            main.power_updated_at["chernihiv"] = updated_at
+        main.power_ok_at["chernihiv"] = datetime.now(TZ)
+        asyncio.run(main.check_power_health("chernihiv"))
+
+    run(old)
+    assert len(sent) == 1 and "не оновлювався" in sent[0][1]
+    run(old)                                # деплой: то же состояние — молчим
+    assert len(sent) == 1
+    run(None, loaded=False)                 # после запуска ещё не загрузили — не «всё ок»
+    assert len(sent) == 1
+    run(datetime.now(TZ))                   # источник ожил — одно сообщение
+    assert len(sent) == 2 and sent[1][1].startswith("✅")
