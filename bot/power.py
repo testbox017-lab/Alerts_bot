@@ -2,7 +2,7 @@
 
 import json
 import re
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 
 import aiohttp
 
@@ -58,33 +58,8 @@ def queue_sort_key(q: str) -> list[int]:
     return [int(x) for x in q.split(".") if x.isdigit()]
 
 
-# ---------- svitlo.live: одна JSON-выдача на всю страну, получасовые слоты ----------
-SVITLO_URL = "https://dtek-api.svitlo-proxy.workers.dev/"
+# стандартные очереди 1.1–6.2: их показываем, даже если графика на сегодня ещё нет
 STANDARD_QUEUES = [f"{a}.{b}" for a in range(1, 7) for b in (1, 2)]
-# Чернівціобленерго нумерует группы 1–12, остальные — 1.1–6.2
-SVITLO_QUEUES = {"chernivetska-oblast": [str(i) for i in range(1, 13)]}
-
-
-def parse_svitlo(payload: dict, cpu: str) -> dict[str, dict[str, list[Interval]]]:
-    """Ответ svitlo.live -> {queue: {iso_day: intervals}} для региона cpu (напр. sumska-oblast).
-
-    Слоты "HH:MM": 1 = свет есть, 2 = отключение, прочее — неизвестно (считаем, что свет есть).
-    """
-    body = payload.get("body") if isinstance(payload, dict) else None
-    if isinstance(body, str):
-        payload = json.loads(body)
-    region = next((r for r in payload.get("regions", []) if r.get("cpu") == cpu), None)
-    if region is None:
-        raise ValueError(f"svitlo.live: region {cpu} is missing")
-    # очереди есть всегда, даже если графика сейчас нет, — чтобы их можно было выбрать
-    res: dict[str, dict[str, list[Interval]]] = {q: {} for q in SVITLO_QUEUES.get(cpu, STANDARD_QUEUES)}
-    for q, days in (region.get("schedule") or {}).items():
-        for day, slots in (days or {}).items():
-            if not isinstance(slots, dict) or not slots:
-                continue
-            halves = [1 if slots.get(f"{i // 2:02d}:{30 * (i % 2):02d}") == 2 else 0 for i in range(48)]
-            res.setdefault(str(q), {})[str(day)] = halves_to_intervals(halves)
-    return res
 
 
 # ---------- Миколаївобленерго: официальный API off.energy.mk.ua ----------
@@ -120,7 +95,7 @@ def parse_mykolaiv(queues: list, series: list, active: list) -> dict[str, dict[s
     return res
 
 
-# off.energy.mk.ua и svitlo-proxy (Cloudflare) отвечают 403 на User-Agent aiohttp/urllib
+# off.energy.mk.ua (Cloudflare) отвечает 403 на User-Agent aiohttp/urllib
 _HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; alerts-bot)"}
 
 
@@ -139,10 +114,16 @@ def parse_koly(d: dict) -> dict[str, dict[str, list[Interval]]]:
     return res
 
 
+def _aware(dt: datetime) -> datetime:
+    """Время без часового пояса считаем UTC: иначе сравнение с datetime.now(TZ)
+    падает с TypeError и останавливает цикл графиков."""
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
 def _koly_stamp(d: dict, key: str) -> datetime | None:
     try:
-        return datetime.fromisoformat(d[key])
-    except (KeyError, TypeError, ValueError):
+        return _aware(datetime.fromisoformat(d[key].replace("Z", "+00:00")))
+    except (KeyError, TypeError, ValueError, AttributeError):
         return None
 
 
@@ -156,12 +137,10 @@ async def fetch_source(session: aiohttp.ClientSession, url: str):
     """-> (расписание, текст времени обновления, lastUpdated как datetime или None).
 
     url — либо ссылка на JSON в формате OE_OUTAGE_DATA/outage-data-ua,
-    либо "svitlo:<cpu>" (svitlo.live), "koly:<id>" (Koly Ye), "mykolaiv:" (API Миколаївобленерго).
-    У svitlo и mykolaiv нет поля lastUpdated, поэтому время обновления — момент загрузки.
+    либо "koly:<id>" (Koly Ye), либо "mykolaiv:" (API Миколаївобленерго).
+    У mykolaiv нет поля lastUpdated, поэтому время обновления — момент загрузки.
     """
     now_txt = f"{datetime.now(TZ):%d.%m.%Y %H:%M}"
-    if url.startswith("svitlo:"):
-        return parse_svitlo(await _get_json(session, SVITLO_URL), url.removeprefix("svitlo:")), now_txt, None
     if url.startswith("koly:"):
         d = await _get_json(session, KOLY_URL.format(url.removeprefix("koly:")))
         upd = _koly_stamp(d, "updatedAt")
@@ -184,7 +163,7 @@ def last_updated(d: dict) -> datetime | None:
     if isinstance(v, (int, float)):  # у gpv-voe-vinnytsia это unix-время
         return datetime.fromtimestamp(v, TZ)
     try:
-        return datetime.fromisoformat(v.replace("Z", "+00:00"))
+        return _aware(datetime.fromisoformat(v.replace("Z", "+00:00")))
     except (KeyError, TypeError, ValueError, AttributeError):
         return None
 
@@ -227,8 +206,11 @@ def parse_intervals(parts: list[str]) -> list[Interval]:
         h1, m1, h2, m2 = (int(x or 0) for x in mt.groups())
         if h1 > 23 or h2 > 24 or m1 > 59 or m2 > 59:
             raise ValueError(p)
+        start = f"{h1:02d}:{m1:02d}"
         end = "24:00" if h2 == 24 else f"{h2:02d}:{m2:02d}"
-        out.append([f"{h1:02d}:{m1:02d}", end])
+        if end <= start:   # «22-02» — через полночь: надо двумя записями, сегодня и завтра
+            raise ValueError(p)
+        out.append([start, end])
     return sorted(out)
 
 

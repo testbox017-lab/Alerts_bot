@@ -88,6 +88,9 @@ def test_last_source_just_raises(env, monkeypatch):
     ({"ALERTS_TOKEN": "x", "UKRAINEALARM_TOKEN": "y"}, ["alertsinua", "ukrainealarm", "mirror"]),
     ({"ALERTS_TOKEN": "x", "UKRAINEALARM_TOKEN": "y", "ALERTS_SOURCE": "ukrainealarm"},
      ["ukrainealarm", "alertsinua", "mirror"]),
+    # опечатка или источник без ключа в ALERTS_SOURCE — порядок по умолчанию
+    ({"ALERTS_TOKEN": "x", "ALERTS_SOURCE": "ukrainealram"}, ["alertsinua", "mirror"]),
+    ({"ALERTS_SOURCE": "alertsinua"}, ["mirror"]),
 ])
 def test_chain_from_env(monkeypatch, env_vars, chain):
     for k in ("ALERTS_TOKEN", "UKRAINEALARM_TOKEN", "ALERTS_SOURCE"):
