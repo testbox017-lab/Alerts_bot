@@ -40,6 +40,11 @@ POWER_POLL_SECONDS = int(os.environ.get("POWER_POLL_SECONDS", "600"))
 POWER_UNREACHABLE_MIN = int(os.environ.get("POWER_UNREACHABLE_MIN", "60"))
 POWER_STALE_HOURS = int(os.environ.get("POWER_STALE_HOURS", "26"))
 DEFAULT_REMIND = int(os.environ.get("DEFAULT_REMIND", "30"))
+# Утренняя сводка (график на сегодня + тревоги за ночь) для НОВЫХ чатов: время «07:00»
+# или пусто — выключена. Каждый чат меняет её сам (⚙️ → ☀️ Ранкове зведення, /summary).
+DEFAULT_SUMMARY = os.environ.get("DEFAULT_SUMMARY", "07:00").strip()
+# Сколько дней хранить журнал тревог для статистики (/stats)
+ALERT_LOG_DAYS = int(os.environ.get("ALERT_LOG_DAYS", "31"))
 # "можливе відключення" (mfirst/msecond) считать отключением
 POSSIBLE_AS_OFF = os.environ.get("POSSIBLE_AS_OFF", "1") == "1"
 
