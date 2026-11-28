@@ -53,3 +53,21 @@ def test_sub_oblasts():
     assert d.get(1).oblasts == []
     d.update(1, oblast="Чернігівська область,Київська область")
     assert d.get(1).oblasts == ["Чернігівська область", "Київська область"]
+
+
+def test_fmt_list_grouped():
+    from bot.alerts import fmt_list
+    kyiv_obl = {"location_title": "Бучанський район", "location_type": "raion",
+                "location_oblast": "Київська область", "location_raion": "Бучанський район",
+                "alert_type": "air_raid"}
+    items = [dict(a, alert_type="air_raid") for a in (OTHER, HROMADA, kyiv_obl, OBL, RAION)]
+    one = fmt_list([a for a in items if a is not items[2]], ["Чернігівська область"])
+    assert "📍" not in one and "(" not in one
+    names = [line.split(": ", 1)[1] for line in one.splitlines()]
+    # вся область, затем районы по алфавиту, громада сразу под своим районом
+    assert names == ["Чернігівська область", "Корюківський район",
+                     "Ніжинський район", "Бахмацька територіальна громада"]
+    many = fmt_list(items, ["Київська область", "Чернігівська область"])
+    blocks = many.split("\n\n")
+    assert blocks[0].startswith("📍 Київська область") and "Бучанський" in blocks[0]
+    assert blocks[1].startswith("📍 Чернігівська область") and "Бучанський" not in blocks[1]
